@@ -2,47 +2,32 @@ package com.clydeenke.ling.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// 使用系统默认字体，中文环境下会自动用思源黑体
-// 如果你想用自定义字体，把ttf文件放在 res/font/ 目录下
-val 字体排版 = Typography(
-    // 歌曲名标题
+// 定义全局字体样式
+val Typography = Typography(
+    // 用于：播放页的大歌名
     headlineLarge = TextStyle(
-        fontWeight = FontWeight.Bold,
-        fontSize = 28.sp,
-        letterSpacing = (-0.5).sp,
+        fontWeight = FontWeight.Bold,    // 加粗
+        fontSize = 28.sp,               // 大字体
+        lineHeight = 36.sp,
+        letterSpacing = (-0.5).sp       // 稍微收紧字间距，更有高级感
     ),
-    headlineMedium = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
-        letterSpacing = (-0.3).sp,
-    ),
-    // 歌手名、副标题
-    titleLarge = TextStyle(
-        fontWeight = FontWeight.Medium,
-        fontSize = 18.sp,
-    ),
-    titleMedium = TextStyle(
-        fontWeight = FontWeight.Medium,
-        fontSize = 15.sp,
-    ),
-    // 正文
+
+    // 用于：歌手名、列表主要文字
     bodyLarge = TextStyle(
         fontWeight = FontWeight.Normal,
         fontSize = 16.sp,
+        lineHeight = 24.sp,
+        letterSpacing = 0.sp
     ),
-    bodyMedium = TextStyle(
-        fontWeight = FontWeight.Normal,
-        fontSize = 14.sp,
-    ),
-    // 小标注，时间、次数等
-    labelSmall = TextStyle(
+
+    // 用于：播放时间（03:20）、小提示文字
+    labelMedium = TextStyle(
         fontWeight = FontWeight.Medium,
-        fontSize = 11.sp,
-        letterSpacing = 0.5.sp,
-    ),
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        letterSpacing = 0.5.sp
+    )
 )

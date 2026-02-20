@@ -1,28 +1,32 @@
 [versions]
-agp = "8.13.0"
-kotlin = "2.1.0"
-coreKtx = "1.15.0"
-lifecycle = "2.8.7"
-activityCompose = "1.9.3"
-composeBom = "2024.12.01"
-navigationCompose = "2.8.5"
-hilt = "2.54"
+# --- 构建工具 ---
+agp = "8.7.3"              # 安卓插件版本
+kotlin = "2.0.21"          # Kotlin语言版本
+ksp = "2.0.21-1.0.27"      # 注解处理工具 (必须跟Kotlin版本对应)
+hilt = "2.51.1"            # 依赖注入框架 (自动化配置)
+
+# --- 系统基础 ---
+coreKtx = "1.13.1"         # 核心扩展
+lifecycle = "2.8.6"        # 生命周期管理
+activityCompose = "1.9.2"  # 活动页集成
+composeBom = "2024.10.00"  # UI库版本总管
+navigationCompose = "2.8.3" # 页面导航
 hiltNavigationCompose = "1.2.0"
-ksp = "2.1.0-1.0.29"
-media3 = "1.5.1"
-room = "2.6.1"
-coil = "2.7.0"
-palette = "1.0.0"
-datastorePreferences = "1.1.1"
+
+# --- 音乐与数据 ---
+room = "2.6.1"             # 数据库 (存歌单)
+media3 = "1.4.1"           # 播放引擎 (最核心)
+coil = "2.7.0"             # 加载封面图片
+coroutines = "1.9.0"       # 异步任务 (扫歌不卡顿)
 
 [libraries]
-# 基础
+# 基础库
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycle" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
-# Compose
+# UI界面库 (Compose)
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
@@ -30,33 +34,26 @@ androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-
-# 导航
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
-# Hilt 依赖注入
+# 依赖注入
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 
-# Media3 音频播放
-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
-
-# Room 数据库
+# 数据库
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 
-# Coil 图片加载
+# 播放引擎
+media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
+media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
+
+# 其他工具
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
-
-# 调色板，用于从专辑封面提取颜色
-palette = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
-
-# DataStore 轻量配置存储
-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
