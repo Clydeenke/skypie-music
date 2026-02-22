@@ -1,10 +1,9 @@
-package com.clydeenke.ling.ui.screens.player
+package com.clydeenke.ling.ui.screen.player
 
-import androidx.compose.animation.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
@@ -12,145 +11,199 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
-import com.clydeenke.ling.ui.screens.library.formatDuration
 import com.clydeenke.ling.viewmodel.MusicViewModel
 import kotlinx.coroutines.delay
-import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.isActive
 
 @Composable
-fun PlayerScreen(viewModel: MusicViewModel, onBack: () -> Unit) {
+fun PlayerScreen(
+    viewModel : MusicViewModel,
+    onBack    : () -> Unit
+) {
     BackHandler(onBack = onBack)
-    val currentSong by viewModel.playerController.currentSong.collectAsState()
-    val isPlaying by viewModel.playerController.isPlaying.collectAsState()
-    val shuffleMode by viewModel.playerController.shuffleMode.collectAsState()
-    val repeatMode by viewModel.playerController.repeatMode.collectAsState()
 
-    // 1. 进度条逻辑：每 500ms 采样一次当前播放位置
-    var currentPosition by remember { mutableLongStateOf(0L) }
-    val duration = currentSong?.duration ?: 1L
+    val song        by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
+    val isPlaying   by viewModel.playerController.isPlaying.collectAsStateWithLifecycle()
+    val repeatMode  by viewModel.playerController.repeatMode.collectAsStateWithLifecycle()
+    val shuffleMode by viewModel.playerController.shuffleMode.collectAsStateWithLifecycle()
 
-    LaunchedEffect(isPlaying, currentSong) {
-        while (isPlaying) {
-            currentPosition = viewModel.playerController.getCurrentPosition()
+    // 进度条轮询
+    var currentMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(1L) }
+
+    // 只有在正在播放或歌曲切换时才启动轮询
+    LaunchedEffect(isPlaying, song) {
+        while (isActive) {
+            currentMs  = viewModel.playerController.getCurrentPosition()
+            durationMs = viewModel.playerController.getDuration().coerceAtLeast(1L)
             delay(500)
         }
     }
 
-    // 2. 黑胶唱片旋转动画
-    val infiniteTransition = rememberInfiniteTransition(label = "rotation")
-    val rotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(20000, easing = LinearEasing)),
-        label = "coverRotation"
-    )
+    // ✅ 安全解包：如果没歌，直接返回
+    val currentSong = song ?: return
 
-    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // 背景：超大模糊封面渲染
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current).data(currentSong?.albumArtUri).crossfade(true).build(),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize().blur(60.dp).graphicsLayer { alpha = 0.45f },
-            contentScale = ContentScale.Crop
-        )
-
-        // 底部渐变遮罩（确保进度条和按钮清晰）
-        Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(
-            0f to MaterialTheme.colorScheme.background.copy(alpha = 0.2f),
-            1f to MaterialTheme.colorScheme.background.copy(alpha = 0.9f)
-        )))
-
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         Column(
-            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().padding(horizontal = 24.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .systemBarsPadding()
+                .padding(horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 顶部导航：收起按钮
-            Row(Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.Rounded.KeyboardArrowDown, "收起", Modifier.size(32.dp)) }
-                Text("正在播放", Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelLarge)
-                IconButton(onClick = {}) { Icon(Icons.Rounded.MoreVert, "更多") }
-            }
+            Spacer(Modifier.height(12.dp))
 
-            Spacer(Modifier.weight(1f))
-
-            // 核心 UI：黑胶封面
-            Box(
-                modifier = Modifier.size(300.dp).graphicsLayer {
-                    if (isPlaying) rotationZ = rotation
-                    shadowElevation = 40.dp.toPx()
-                    shape = CircleShape
-                    clip = true
+            // 顶栏
+            Row(
+                modifier          = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = "收起")
                 }
-            ) {
-                AsyncImage(
-                    model = currentSong?.albumArtUri,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
+                Text(
+                    text      = "正在播放",
+                    style     = MaterialTheme.typography.titleLarge,
+                    modifier  = Modifier.weight(1f),
+                    textAlign = TextAlign.Center
                 )
+                IconButton(onClick = { /* TODO: 更多选项 */ }) {
+                    Icon(Icons.Rounded.MoreVert, contentDescription = "更多")
+                }
             }
 
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(24.dp))
 
-            // 歌曲信息卡片
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.7f),
-                tonalElevation = 4.dp
+            // 专辑封面
+            AsyncImage(
+                model              = currentSong.albumArtUri,
+                contentDescription = "专辑封面",
+                modifier           = Modifier
+                    .fillMaxWidth(0.85f)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(24.dp))
+            )
+
+            Spacer(Modifier.height(32.dp))
+
+            // 歌曲信息
+            Row(
+                modifier          = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(currentSong?.title ?: "未知歌曲", style = MaterialTheme.typography.headlineSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(currentSong?.artist ?: "未知歌手", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.primary)
-
-                    Spacer(Modifier.height(32.dp))
-
-                    // 进度条
-                    Slider(
-                        value = (currentPosition.toFloat() / duration.toFloat()).coerceIn(0f, 1f),
-                        onValueChange = { viewModel.playerController.seekTo((it * duration).toLong()) },
-                        colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text     = currentSong.title,
+                        style    = MaterialTheme.typography.headlineMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
-                        Text(formatDuration(currentPosition), style = MaterialTheme.typography.labelMedium)
-                        Text(formatDuration(duration), style = MaterialTheme.typography.labelMedium)
-                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text     = currentSong.artist,
+                        style    = MaterialTheme.typography.bodyLarge,
+                        color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                IconButton(onClick = { /* TODO: 收藏逻辑 */ }) {
+                    Icon(Icons.Rounded.FavoriteBorder, contentDescription = "收藏")
+                }
+            }
 
-                    Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
 
-                    // 播放控制
-                    Row(Modifier.fillMaxWidth(), Arrangement.SpaceEvenly, Alignment.CenterVertically) {
-                        IconButton(onClick = { viewModel.playerController.toggleShuffle() }) {
-                            Icon(Icons.Rounded.Shuffle, null, tint = if (shuffleMode) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-                        }
-                        IconButton(onClick = { viewModel.playerController.skipToPrevious() }, Modifier.size(48.dp)) {
-                            Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(36.dp))
-                        }
-                        FilledIconButton(onClick = { viewModel.playerController.togglePlayPause() }, Modifier.size(72.dp)) {
-                            Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(40.dp))
-                        }
-                        IconButton(onClick = { viewModel.playerController.skipToNext() }, Modifier.size(48.dp)) {
-                            Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp))
-                        }
-                        IconButton(onClick = { viewModel.playerController.toggleRepeat() }) {
-                            Icon(if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, null, tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-                        }
-                    }
+            // 进度条
+            Slider(
+                value         = (currentMs.toFloat() / durationMs).coerceIn(0f, 1f),
+                onValueChange = { viewModel.playerController.seekTo((it * durationMs).toLong()) },
+                modifier      = Modifier.fillMaxWidth()
+            )
+
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(formatMs(currentMs),  style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatMs(durationMs), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            // 控制按钮行
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                // 随机模式
+                IconButton(onClick = { viewModel.playerController.toggleShuffle() }) {
+                    Icon(
+                        imageVector        = Icons.Rounded.Shuffle,
+                        contentDescription = "随机",
+                        tint               = if (shuffleMode) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // 上一首
+                IconButton(
+                    onClick  = { viewModel.playerController.skipToPrevious() },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(Icons.Rounded.SkipPrevious, contentDescription = "上一首", modifier = Modifier.size(34.dp))
+                }
+
+                // 播放/暂停
+                FilledIconButton(
+                    onClick  = { viewModel.playerController.togglePlayPause() },
+                    modifier = Modifier.size(68.dp)
+                ) {
+                    Icon(
+                        imageVector        = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = "切换播放状态",
+                        modifier           = Modifier.size(36.dp)
+                    )
+                }
+
+                // 下一首
+                IconButton(
+                    onClick  = { viewModel.playerController.skipToNext() },
+                    modifier = Modifier.size(56.dp)
+                ) {
+                    Icon(Icons.Rounded.SkipNext, contentDescription = "下一首", modifier = Modifier.size(34.dp))
+                }
+
+                // 循环模式
+                IconButton(onClick = { viewModel.playerController.toggleRepeat() }) {
+                    Icon(
+                        imageVector        = when (repeatMode) {
+                            Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne
+                            else -> Icons.Rounded.Repeat
+                        },
+                        contentDescription = "循环模式",
+                        tint               = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
             Spacer(Modifier.height(32.dp))
         }
     }
+}
+
+private fun formatMs(ms: Long): String {
+    val total = ms / 1000
+    return "%d:%02d".format(total / 60, total % 60)
 }

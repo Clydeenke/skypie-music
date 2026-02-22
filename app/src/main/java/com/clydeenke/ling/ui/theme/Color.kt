@@ -2,18 +2,17 @@ package com.clydeenke.ling.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// --- 基础配色 (当系统不支持动态取色时作为保底) ---
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// 品牌基准色（TG 蓝风格）
+val YunBlue80      = Color(0xFFADC6FF)
+val YunBlueGrey80  = Color(0xFFBEC6DC)
+val YunBlue40      = Color(0xFF1A73E8) // 经典 TG 蓝
+val YunBlueGrey40  = Color(0xFF4A5568)
 
-val Purple40 = Color(0xFF6650A4)
-val PurpleGrey40 = Color(0xFF625B71)
-val Pink40 = Color(0xFF7D5260)
+// 氛围控制层
+val GlassWhite     = Color(0x33FFFFFF)
+val GlassBlack     = Color(0x66000000)
 
-// --- 灵感配色 (打造苹果级质感的核心) ---
-// 玻璃拟态效果：这两种颜色是实现“磨砂玻璃”效果的关键，带透明度
-val GlassWhite = Color(0x40FFFFFF)      // 半透明白 (亮色模式用)
-val GlassWhiteDark = Color(0x20FFFFFF)  // 更深一点的半透明 (暗色模式用)
-
-// 以后可以在这里添加更多“Ling”专属的颜色变量
+// TG 风格背景色
+val TgBgLight      = Color(0xFFF1F3F4)
+val TgBgDark       = Color(0xFF1C2433) // 深航海蓝
+val TgSurface      = Color(0xFF212D3B)
