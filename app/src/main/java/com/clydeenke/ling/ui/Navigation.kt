@@ -20,80 +20,75 @@ import com.clydeenke.ling.ui.screen.folders.FolderScreen
 import com.clydeenke.ling.ui.screen.library.LibraryScreen
 import com.clydeenke.ling.viewmodel.MusicViewModel
 
-private val PAGE_TITLES = listOf("音乐库", "文件夹")
+val MINI_BAR_HEIGHT_DP = 64.dp
 
-@OptIn(ExperimentalSharedTransitionApi::class) // 必须添加，因为共享元素 API 还是实验性的
 @Composable
 fun MainNavigation() {
-    val viewModel: MusicViewModel = hiltViewModel()
+    val viewModel   : MusicViewModel = hiltViewModel()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
-    val pagerState = rememberPagerState(pageCount = { 2 })
+    val pagerState   = rememberPagerState(pageCount = { 2 })
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background
-    ) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        // ✅ 最外层 Box，SharedPlayerContainer 作为最后一个子项（最高层级）
         Box(modifier = Modifier.fillMaxSize()) {
-            // ── 主界面层 ──────────────────────────────────────────────
+
+            // ── 主界面 ──────────────────────────────────────────────
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
             ) {
-                // 页面标题
                 Text(
-                    text = PAGE_TITLES[pagerState.currentPage],
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    text     = listOf("音乐库", "文件夹")[pagerState.currentPage],
+                    style    = MaterialTheme.typography.headlineLarge,
+                    color    = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp)
                 )
 
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.weight(1f)
-                ) { page ->
+                HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { page ->
                     when (page) {
                         0 -> LibraryScreen(
-                            viewModel = viewModel,
-                            onSongClick = { songs, index ->
-                                viewModel.playSong(songs, index)
-                            }
+                            viewModel   = viewModel,
+                            onSongClick = { songs, index -> viewModel.playSong(songs, index) }
                         )
                         1 -> FolderScreen(viewModel = viewModel)
                     }
                 }
 
-                // 指示器放在 Column 底部
                 PagerIndicator(
-                    pageCount = 2,
+                    pageCount   = 2,
                     currentPage = pagerState.currentPage,
-                    modifier = Modifier
+                    modifier    = Modifier
                         .align(Alignment.CenterHorizontally)
-                        .padding(vertical = 12.dp)
+                        .padding(vertical = 6.dp)
                 )
 
-                // ── 播放器容器 ─────────────────────────
-                // 注意：这里我们让它在 Column 的最底部显示
-                AnimatedVisibility(
-                    visible = currentSong != null,
-                    enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
-                    exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
-                ) {
-                    SharedPlayerContainer(
-                        viewModel = viewModel,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp) // 给 Mini 状态加点边距更好看
-                    )
+                // Mini 胶囊占位 spacer（防止列表内容被播放器遮住）
+                if (currentSong != null) {
+                    Spacer(Modifier.height(MINI_BAR_HEIGHT_DP + 12.dp))
                 }
 
-                // 适配系统导航栏
                 Spacer(Modifier.navigationBarsPadding())
-            } // Column 结束
-        } // Box 结束
-    } // Surface 结束
-}
+            }
 
+            // ✅ SharedPlayerContainer 在 Box 最后 = 最高 z-order
+            // 全屏展开时完全覆盖标题栏，Mini 状态时固定在底部
+            AnimatedVisibility(
+                visible = currentSong != null,
+                enter   = slideInVertically(
+                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)
+                ) { it } + fadeIn(tween(200)),
+                exit    = slideOutVertically { it } + fadeOut(tween(150)),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                SharedPlayerContainer(
+                    viewModel = viewModel,
+                    modifier  = Modifier.fillMaxSize()
+                )
+            }
+        }
+    }
+}
 @Composable
 private fun PagerIndicator(
     pageCount: Int,
