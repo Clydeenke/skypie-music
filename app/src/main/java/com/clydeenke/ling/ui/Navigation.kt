@@ -12,11 +12,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clydeenke.ling.ui.components.MiniPlayer
-// ↓ 按你实际路径选 screen 或 screens
 import com.clydeenke.ling.ui.screen.folders.FolderScreen
 import com.clydeenke.ling.ui.screen.library.LibraryScreen
 import com.clydeenke.ling.ui.screen.player.PlayerScreen
@@ -28,108 +28,116 @@ private val PAGE_TITLES = listOf("音乐库", "文件夹")
 fun MainNavigation() {
     val viewModel   : MusicViewModel = hiltViewModel()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
+    var showPlayer  by remember { mutableStateOf(false) }
+    val pagerState   = rememberPagerState(pageCount = { 2 })
 
-    // 是否展示全屏播放器
-    var showPlayer by remember { mutableStateOf(false) }
-
-    // HorizontalPager 状态（0 = 音乐库，1 = 文件夹）
-    val pagerState = rememberPagerState(pageCount = { 2 })
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+    // ✅ Surface 替代 Box+background，自动管理 onBackground/onSurface 等文字颜色
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color    = MaterialTheme.colorScheme.background
     ) {
-        // ── 主界面（HorizontalPager） ─────────────────────────────
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()   // 统一在这里处理状态栏，子页面不需要再加
-        ) {
-            // 当前页标题
-            Text(
-                text     = PAGE_TITLES[pagerState.currentPage],
-                style    = MaterialTheme.typography.headlineLarge,
-                modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp)
-            )
+        Box(modifier = Modifier.fillMaxSize()) {
 
-            // 页面内容
-            HorizontalPager(
-                state    = pagerState,
-                modifier = Modifier.weight(1f)
-            ) { page ->
-                when (page) {
-                    0 -> LibraryScreen(
-                        viewModel   = viewModel,
-                        onSongClick = { songs, index ->
-                            viewModel.playSong(songs, index)
-                            showPlayer = true
-                        }
-                    )
-                    1 -> FolderScreen(viewModel = viewModel)
+            // ── 主界面 ──────────────────────────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+            ) {
+                // 页面标题
+                Text(
+                    text     = PAGE_TITLES[pagerState.currentPage],
+                    style    = MaterialTheme.typography.headlineLarge,
+                    color    = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp)
+                )
+
+                HorizontalPager(
+                    state    = pagerState,
+                    modifier = Modifier.weight(1f)
+                ) { page ->
+                    when (page) {
+                        0 -> LibraryScreen(
+                            viewModel   = viewModel,
+                            onSongClick = { songs, index ->
+                                viewModel.playSong(songs, index)
+                                showPlayer = true
+                            }
+                        )
+                        1 -> FolderScreen(viewModel = viewModel)
+                    }
                 }
+
+                // 页面指示器
+                PagerIndicator(
+                    pageCount   = 2,
+                    currentPage = pagerState.currentPage,
+                    modifier    = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(vertical = 6.dp)
+                )
+
+                // ── 迷你播放条：弹簧动画滑入 ─────────────────────────
+                AnimatedVisibility(
+                    visible = currentSong != null,
+                    enter   = slideInVertically(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness    = Spring.StiffnessMediumLow
+                        )
+                    ) { it } + fadeIn(tween(200)),
+                    exit    = slideOutVertically(
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioNoBouncy,
+                            stiffness    = Spring.StiffnessMedium
+                        )
+                    ) { it } + fadeOut(tween(150))
+                ) {
+                    MiniPlayer(
+                        viewModel     = viewModel,
+                        onExpandClick = { showPlayer = true },
+                        modifier      = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+
+                Spacer(Modifier.navigationBarsPadding())
             }
 
-            // 页面指示器小点
-            PagerIndicator(
-                pageCount   = 2,
-                currentPage = pagerState.currentPage,
-                modifier    = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(vertical = 6.dp)
-            )
-
-            // ── MiniPlayer：弹簧动画进出 ──────────────────────────
+            // ── 全屏播放器：从底部放大展开（模拟从迷你播放条膨胀）──
             AnimatedVisibility(
-                visible = currentSong != null,
-                enter   = slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                visible = showPlayer,
+                enter   = scaleIn(
+                    animationSpec   = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
                         stiffness    = Spring.StiffnessMediumLow
-                    )
-                ) { it } + fadeIn(),
-                exit    = slideOutVertically(
-                    animationSpec = spring(
+                    ),
+                    initialScale    = 0.08f,
+                    transformOrigin = TransformOrigin(0.5f, 1f)  // 从底部中心展开
+                ) + fadeIn(tween(250)),
+                exit    = scaleOut(
+                    animationSpec   = spring(
                         dampingRatio = Spring.DampingRatioNoBouncy,
                         stiffness    = Spring.StiffnessMedium
-                    )
-                ) { it } + fadeOut()
+                    ),
+                    targetScale     = 0.08f,
+                    transformOrigin = TransformOrigin(0.5f, 1f)  // 收回底部中心
+                ) + fadeOut(tween(200))
             ) {
-                MiniPlayer(
-                    viewModel     = viewModel,
-                    onExpandClick = { showPlayer = true },
-                    modifier      = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                )
+                // ✅ Surface 确保播放器内文字颜色正确
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color    = MaterialTheme.colorScheme.background
+                ) {
+                    PlayerScreen(
+                        viewModel = viewModel,
+                        onBack    = { showPlayer = false }
+                    )
+                }
             }
-
-            Spacer(Modifier.navigationBarsPadding())
-        }
-
-        // ── 全屏播放器：从底部弹出 ────────────────────────────────
-        AnimatedVisibility(
-            visible = showPlayer,
-            enter   = slideInVertically(
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioLowBouncy,
-                    stiffness    = Spring.StiffnessMediumLow
-                )
-            ) { it } + fadeIn(tween(200)),
-            exit    = slideOutVertically(
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioNoBouncy,
-                    stiffness    = Spring.StiffnessMedium
-                )
-            ) { it } + fadeOut(tween(150))
-        ) {
-            PlayerScreen(
-                viewModel = viewModel,
-                onBack    = { showPlayer = false }
-            )
         }
     }
 }
 
-// ── 小圆点指示器 ──────────────────────────────────────────────────────────────
 @Composable
 private fun PagerIndicator(
     pageCount   : Int,
@@ -137,16 +145,16 @@ private fun PagerIndicator(
     modifier    : Modifier = Modifier
 ) {
     Row(
-        modifier            = modifier,
+        modifier              = modifier,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment   = Alignment.CenterVertically
+        verticalAlignment     = Alignment.CenterVertically
     ) {
         repeat(pageCount) { index ->
             val isSelected = index == currentPage
             val width by animateDpAsState(
                 targetValue   = if (isSelected) 20.dp else 6.dp,
-                animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                label         = "indicatorWidth"
+                animationSpec = tween(250, easing = FastOutSlowInEasing),
+                label         = "dot"
             )
             Box(
                 modifier = Modifier

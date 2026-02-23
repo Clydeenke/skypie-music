@@ -34,7 +34,6 @@ fun MiniPlayer(
 
     val currentSong = song ?: return
 
-    // 胶囊容器
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -54,16 +53,14 @@ fun MiniPlayer(
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // ── 专辑封面：切歌时淡入淡出更新 ────────────────────
+            // ── 封面：以 song.id 为 key，切歌时淡入淡出 ──────────
             AnimatedContent(
-                targetState  = currentSong.albumArtUri,
-                transitionSpec = {
-                    fadeIn(tween(300)) togetherWith fadeOut(tween(200))
-                },
-                label = "miniArt"
-            ) { artUri ->
+                targetState  = currentSong.id,
+                transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(200)) },
+                label        = "miniArt"
+            ) { _ ->
                 AsyncImage(
-                    model              = artUri,
+                    model              = currentSong.albumArtUri,
                     contentDescription = null,
                     modifier           = Modifier
                         .size(44.dp)
@@ -73,23 +70,24 @@ fun MiniPlayer(
 
             Spacer(Modifier.width(12.dp))
 
-            // ── 歌曲信息：切歌时淡入淡出更新 ────────────────────
+            // ── 歌曲信息：weight(1f) 让它撑满剩余空间 ────────────
+            // ✅ weight 放在 AnimatedContent 上，确保按钮始终在右边
             AnimatedContent(
-                targetState  = currentSong,
-                transitionSpec = {
-                    fadeIn(tween(250)) togetherWith fadeOut(tween(200))
-                },
+                targetState  = currentSong.id,
+                transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(200)) },
+                modifier     = Modifier.weight(1f),
                 label        = "miniInfo"
-            ) { s ->
-                Column(modifier = Modifier.weight(1f)) {
+            ) { _ ->
+                Column {
                     Text(
-                        text     = s.title,
+                        text     = currentSong.title,
                         style    = MaterialTheme.typography.titleLarge,
+                        color    = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text     = s.artist,
+                        text     = currentSong.artist,
                         style    = MaterialTheme.typography.bodyMedium,
                         color    = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -98,7 +96,7 @@ fun MiniPlayer(
                 }
             }
 
-            // ── 上一首 ────────────────────────────────────────────
+            // ── 控制按钮（固定在最右，不会被歌名挤掉）────────────
             IconButton(
                 onClick  = { viewModel.playerController.skipToPrevious() },
                 modifier = Modifier.size(40.dp)
@@ -106,12 +104,11 @@ fun MiniPlayer(
                 Icon(
                     Icons.Rounded.SkipPrevious,
                     contentDescription = "上一首",
-                    modifier           = Modifier.size(24.dp),
+                    modifier           = Modifier.size(22.dp),
                     tint               = MaterialTheme.colorScheme.onSurface
                 )
             }
 
-            // ── 播放 / 暂停 ───────────────────────────────────────
             IconButton(
                 onClick  = { viewModel.playerController.togglePlayPause() },
                 modifier = Modifier.size(44.dp)
@@ -124,7 +121,6 @@ fun MiniPlayer(
                 )
             }
 
-            // ── 下一首 ────────────────────────────────────────────
             IconButton(
                 onClick  = { viewModel.playerController.skipToNext() },
                 modifier = Modifier.size(40.dp)
@@ -132,7 +128,7 @@ fun MiniPlayer(
                 Icon(
                     Icons.Rounded.SkipNext,
                     contentDescription = "下一首",
-                    modifier           = Modifier.size(24.dp),
+                    modifier           = Modifier.size(22.dp),
                     tint               = MaterialTheme.colorScheme.onSurface
                 )
             }

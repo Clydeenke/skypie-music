@@ -20,24 +20,22 @@ import javax.inject.Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context
 ) {
-    private var controllerFuture: ListenableFuture<MediaController>? = null
-    private var mediaController: MediaController? = null
+    private var controllerFuture : ListenableFuture<MediaController>? = null
+    private var mediaController  : MediaController? = null
+
+    // ✅ 保存播放队列，用 mediaId 而不是 tag 来找歌曲
+    private var currentQueue : List<Song> = emptyList()
+    private var currentIndex : Int        = 0
 
     private val _isPlaying       = MutableStateFlow(false)
     private val _currentSong     = MutableStateFlow<Song?>(null)
-    private val _currentPosition = MutableStateFlow(0L)
     private val _shuffleMode     = MutableStateFlow(false)
-    private val _repeatMode      = MutableStateFlow(Player.REPEAT_MODE_ALL) // 默认全部循环
+    private val _repeatMode      = MutableStateFlow(Player.REPEAT_MODE_ALL)
 
-    val isPlaying      : StateFlow<Boolean> = _isPlaying.asStateFlow()
-    val currentSong    : StateFlow<Song?>   = _currentSong.asStateFlow()
-    val currentPosition: StateFlow<Long>    = _currentPosition.asStateFlow()
-    val shuffleMode    : StateFlow<Boolean> = _shuffleMode.asStateFlow()
-    val repeatMode     : StateFlow<Int>     = _repeatMode.asStateFlow()
-
-    // 记录当前播放列表，用于手动循环
-    private var currentQueue: List<Song> = emptyList()
-    private var currentQueueIndex: Int   = 0
+    val isPlaying  : StateFlow<Boolean> = _isPlaying.asStateFlow()
+    val currentSong: StateFlow<Song?>   = _currentSong.asStateFlow()
+    val shuffleMode: StateFlow<Boolean> = _shuffleMode.asStateFlow()
+    val repeatMode : StateFlow<Int>     = _repeatMode.asStateFlow()
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -45,12 +43,15 @@ class PlayerController @Inject constructor(
         }
 
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
-            // ✅ 关键修复：只在非 null 时更新，不因为过渡动画的短暂 null 清空当前歌曲
-            val song = item?.localConfiguration?.tag as? Song
-            if (song != null) {
-                _currentSong.value = song
-                currentQueueIndex  = currentQueue.indexOfFirst { it.id == song.id }
-                    .coerceAtLeast(0)
+            // ✅ 关键修复：用 mediaId（song.id.toString()）在本地队列里查歌
+            // MediaItem.localConfiguration.tag 跨进程会丢失，不能用
+            val mediaId = item?.mediaId
+            if (!mediaId.isNullOrEmpty()) {
+                val song = currentQueue.find { it.id.toString() == mediaId }
+                if (song != null) {
+                    _currentSong.value = song
+                    currentIndex = currentQueue.indexOf(song)
+                }
             }
         }
 
@@ -61,101 +62,79 @@ class PlayerController @Inject constructor(
         override fun onRepeatModeChanged(mode: Int) {
             _repeatMode.value = mode
         }
-
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            // 播放结束时（队列跑完）手动跳回开头
-            if (playbackState == Player.STATE_ENDED) {
-                mediaController?.seekTo(0, 0)
-                mediaController?.play()
-            }
-        }
     }
 
     fun connect() {
-        val token = SessionToken(context, ComponentName(context, MusicService::class.java))
+        val token  = SessionToken(context, ComponentName(context, MusicService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         controllerFuture = future
-        future.addListener({
-            try {
-                val mc = future.get()
-                mediaController = mc
-                mc.addListener(listener)
-                // 连接成功后同步一次当前状态
-                _isPlaying.value  = mc.isPlaying
-                _repeatMode.value = mc.repeatMode
-                _shuffleMode.value = mc.shuffleModeEnabled
-            } catch (e: Exception) {
-                // 服务未就绪，播放时会重试
-            }
-        }, MoreExecutors.directExecutor())
+        future.addListener(
+            {
+                try {
+                    mediaController = future.get()
+                    mediaController?.apply {
+                        repeatMode = Player.REPEAT_MODE_ALL
+                        addListener(listener)
+                    }
+                } catch (_: Exception) {}
+            },
+            MoreExecutors.directExecutor()
+        )
     }
 
     fun playQueue(songs: List<Song>, startIndex: Int = 0) {
+        if (songs.isEmpty()) return
         currentQueue = songs
-        currentQueueIndex = startIndex
+        currentIndex = startIndex.coerceIn(0, songs.lastIndex)
 
         val items = songs.map { song ->
             MediaItem.Builder()
                 .setUri(song.uri)
-                .setTag(song)
+                .setMediaId(song.id.toString())  // ✅ 用 mediaId，不用 tag
                 .build()
         }
-
-        // ✅ 先更新 StateFlow，保证 UI 在 mediaController 连接前就能看到歌曲
-        _currentSong.value = songs.getOrNull(startIndex)
-
         mediaController?.run {
-            setMediaItems(items, startIndex, 0L)
-            repeatMode = Player.REPEAT_MODE_ALL  // 默认全部循环
+            setMediaItems(items, currentIndex, 0L)
+            repeatMode = Player.REPEAT_MODE_ALL
             prepare()
             play()
         }
-    }
-
-    fun togglePlayPause() {
-        mediaController?.let { if (it.isPlaying) it.pause() else it.play() }
+        _currentSong.value = songs.getOrNull(currentIndex)
     }
 
     fun skipToNext() {
-        val mc = mediaController
-        if (mc != null) {
-            if (mc.hasNextMediaItem()) {
-                mc.seekToNextMediaItem()
-            } else {
-                // ✅ 到队列末尾时，跳回第一首继续播放
-                mc.seekTo(0, 0)
-                mc.play()
-                _currentSong.value = currentQueue.firstOrNull()
-                currentQueueIndex  = 0
-            }
+        val mc = mediaController ?: return
+        if (currentQueue.isEmpty()) return
+        if (mc.hasNextMediaItem()) {
+            mc.seekToNextMediaItem()
+        } else {
+            mc.seekTo(0, 0L)
+            mc.play()
+            _currentSong.value = currentQueue.firstOrNull()
+            currentIndex = 0
         }
     }
 
     fun skipToPrevious() {
         val mc = mediaController ?: return
-        if (mc.currentPosition > 3000) {
-            mc.seekTo(0)
-        } else if (mc.hasPreviousMediaItem()) {
-            mc.seekToPreviousMediaItem()
-        } else {
-            // ✅ 已在第一首时，跳到最后一首
-            val lastIndex = currentQueue.lastIndex
-            if (lastIndex >= 0) {
-                mc.seekTo(lastIndex, 0)
+        if (currentQueue.isEmpty()) return
+        when {
+            mc.currentPosition > 3000   -> mc.seekTo(0L)
+            mc.hasPreviousMediaItem()   -> mc.seekToPreviousMediaItem()
+            else -> {
+                val last = currentQueue.lastIndex
+                mc.seekTo(last, 0L)
                 mc.play()
-                _currentSong.value   = currentQueue.lastOrNull()
-                currentQueueIndex    = lastIndex
+                _currentSong.value = currentQueue.lastOrNull()
+                currentIndex = last
             }
         }
     }
 
-    fun seekTo(ms: Long) { mediaController?.seekTo(ms) }
-
-    fun toggleShuffle() {
-        mediaController?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled }
-    }
-
-    fun toggleRepeat() {
+    fun seekTo(ms: Long)    { mediaController?.seekTo(ms) }
+    fun togglePlayPause()   { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
+    fun toggleShuffle()     { mediaController?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }
+    fun toggleRepeat()      {
         mediaController?.let {
             it.repeatMode = when (it.repeatMode) {
                 Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
@@ -166,7 +145,7 @@ class PlayerController @Inject constructor(
     }
 
     fun getCurrentPosition(): Long = mediaController?.currentPosition ?: 0L
-    fun getDuration(): Long        = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
+    fun getDuration()       : Long = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
 
     fun release() {
         mediaController?.release()

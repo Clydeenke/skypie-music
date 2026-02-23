@@ -44,15 +44,23 @@ fun FolderScreen(viewModel: MusicViewModel) {
 
     Scaffold(
         topBar = {
-            LargeTopAppBar(
-                title = { Text("文件夹管理") },
+            TopAppBar(
+                title = { },
                 actions = {
+                    // 日志按钮
                     IconButton(onClick = { showLogs = !showLogs }) {
-                        Icon(if (showLogs) Icons.Rounded.VisibilityOff else Icons.Rounded.Terminal, null)
+                        Icon(
+                            if (showLogs) Icons.Rounded.VisibilityOff else Icons.Rounded.Terminal,
+                            contentDescription = "扫描日志"
+                        )
                     }
+                    // 扫描按钮
                     IconButton(onClick = { viewModel.refresh() }, enabled = !isScanning) {
-                        if (isScanning) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                        else Icon(Icons.Rounded.Sync, "刷新")
+                        if (isScanning) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Rounded.Sync, contentDescription = "重新扫描")
+                        }
                     }
                 }
             )
