@@ -6,6 +6,15 @@ plugins {
     alias(libs.plugins.ksp) // 必须用 KSP 才能让新版 Room 飞速运行
 }
 
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.addAll(
+            "-opt-in=androidx.compose.animation.ExperimentalSharedTransitionApi",
+            "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"
+        )
+    }
+}
+
 android {
     namespace = "com.clydeenke.ling" // 【已修正】你的包名
     compileSdk = 36 // Android 16 标准
@@ -50,6 +59,8 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.animation)
 
     // Hilt 注入
     implementation(libs.hilt.android)
