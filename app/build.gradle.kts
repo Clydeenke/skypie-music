@@ -16,8 +16,8 @@ kotlin {
 }
 
 android {
-    namespace = "com.clydeenke.ling" // 【已修正】你的包名
-    compileSdk = 36 // Android 16 标准
+    namespace = "com.clydeenke.ling"
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.clydeenke.ling"
