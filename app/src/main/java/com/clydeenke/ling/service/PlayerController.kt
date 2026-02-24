@@ -120,7 +120,9 @@ class PlayerController @Inject constructor(
         if (currentQueue.isEmpty()) return
         when {
             mc.currentPosition > 3000   -> mc.seekTo(0L)
-            mc.hasPreviousMediaItem()   -> mc.seekToPreviousMediaItem()
+            mc.hasPreviousMediaItem()   -> {
+                mc.seekToPreviousMediaItem()
+            }
             else -> {
                 val last = currentQueue.lastIndex
                 mc.seekTo(last, 0L)
@@ -146,6 +148,26 @@ class PlayerController @Inject constructor(
 
     fun getCurrentPosition(): Long = mediaController?.currentPosition ?: 0L
     fun getDuration()       : Long = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
+
+    // ── 供全屏 HorizontalPager 使用的辅助方法 ─────────────────────────────
+    fun getCurrentQueueSize(): Int = currentQueue.size
+
+    fun getCurrentIndex(): Int = currentIndex.coerceIn(
+        minimumValue = 0,
+        maximumValue = (currentQueue.size - 1).coerceAtLeast(0)
+    )
+
+    fun getSongAt(index: Int): Song? = currentQueue.getOrNull(index)
+
+    fun playAtIndex(index: Int) {
+        val mc = mediaController ?: return
+        if (currentQueue.isEmpty()) return
+        val target = index.coerceIn(0, currentQueue.lastIndex)
+        mc.seekTo(target, 0L)
+        mc.play()
+        _currentSong.value = currentQueue.getOrNull(target)
+        currentIndex = target
+    }
 
     fun release() {
         mediaController?.release()

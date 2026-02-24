@@ -71,15 +71,18 @@ fun MainNavigation() {
                 Spacer(Modifier.navigationBarsPadding())
             }
 
-            // ✅ SharedPlayerContainer 在 Box 最后 = 最高 z-order
-            // 全屏展开时完全覆盖标题栏，Mini 状态时固定在底部
+            // ✅ SharedPlayerContainer 作为全屏覆盖层（fillMaxSize）
+            // 由内部自己决定 Mini/Full 的具体位置，避免外层 wrapContent 造成高度错误
             AnimatedVisibility(
                 visible = currentSong != null,
                 enter   = slideInVertically(
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness    = Spring.StiffnessMediumLow
+                    )
                 ) { it } + fadeIn(tween(200)),
                 exit    = slideOutVertically { it } + fadeOut(tween(150)),
-                modifier = Modifier.align(Alignment.BottomCenter)
+                modifier = Modifier.fillMaxSize()
             ) {
                 SharedPlayerContainer(
                     viewModel = viewModel,
