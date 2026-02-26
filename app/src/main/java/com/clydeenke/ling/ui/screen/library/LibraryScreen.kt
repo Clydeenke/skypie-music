@@ -51,7 +51,9 @@ fun LibraryScreen(
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 20.dp, bottom = 4.dp)
             )
-            LazyColumn(contentPadding = PaddingValues(bottom = 8.dp)) {
+            LazyColumn(
+                contentPadding = PaddingValues(bottom = 108.dp)
+            ) {
                 itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
                     SongListItem(
                         song    = song,
@@ -80,7 +82,7 @@ private fun LibrarySearchBar(
         value         = query,
         onValueChange = onQueryChange,
         modifier      = modifier,
-        placeholder   = { Text("搜索歌曲、歌手、专辑") },
+        placeholder   = { Text(" ") },
         leadingIcon   = { Icon(Icons.Rounded.Search, contentDescription = null) },
         trailingIcon  = {
             if (query.isNotBlank()) {
