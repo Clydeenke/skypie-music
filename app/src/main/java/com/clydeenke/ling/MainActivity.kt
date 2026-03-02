@@ -1,17 +1,21 @@
 package com.clydeenke.ling
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.clydeenke.ling.service.PlayerController // 确保此路径与你的接口位置完全一致
-import com.clydeenke.ling.ui.theme.LingTheme // 统一使用项目命名
+import com.clydeenke.ling.service.PlayerController
+import com.clydeenke.ling.ui.theme.LingTheme
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -21,8 +25,7 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var playerController: PlayerController
 
-    // 适配 Android 16 (API 35+) 的媒体权限逻辑
-    private val requiredPermission
+    private val audioPermission
         get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
             Manifest.permission.READ_MEDIA_AUDIO
         else
@@ -30,25 +33,16 @@ class MainActivity : ComponentActivity() {
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        // 2026 规范：如果权限被拒，可以在此处通过 UI 发送事件通知用户功能受限
-    }
+    ) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // 1. 启动页加载
         installSplashScreen()
         super.onCreate(savedInstanceState)
-
-        // 2. 沉浸式边缘到边缘适配
         enableEdgeToEdge()
 
-        // 3. 运行时权限检查
         checkAndRequestPermissions()
-
-        // 4. 初始化音频连接
         playerController.connect()
 
-        // 5. 渲染 UI
         setContent {
             LingTheme {
                 MainNavigation()
@@ -57,17 +51,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkAndRequestPermissions() {
-        val hasPermission = ContextCompat.checkSelfPermission(
-            this, requiredPermission
+        // 音频权限
+        val hasAudio = ContextCompat.checkSelfPermission(
+            this, audioPermission
         ) == PackageManager.PERMISSION_GRANTED
+        if (!hasAudio) {
+            permissionLauncher.launch(audioPermission)
+        }
 
-        if (!hasPermission) {
-            permissionLauncher.launch(requiredPermission)
+        // ✅ 完整文件访问权限（用于读取 LRC 歌词文件）
+        // Android 11+ 需要单独申请，会跳转到系统设置页面让用户手动开启
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                }
+                startActivity(intent)
+            }
         }
     }
 
     override fun onDestroy() {
-        // 先断开控制器连接，避免内存泄漏
         playerController.release()
         super.onDestroy()
     }

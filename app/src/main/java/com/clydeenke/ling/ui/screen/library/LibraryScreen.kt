@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.CloudQueue
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
@@ -14,26 +15,52 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.clydeenke.ling.domain.model.Song
 import com.clydeenke.ling.viewmodel.MusicViewModel
 
 @Composable
 fun LibraryScreen(
-    viewModel   : MusicViewModel,
-    onSongClick : (songs: List<Song>, index: Int) -> Unit
+    viewModel            : MusicViewModel,
+    onSongClick          : (songs: List<Song>, index: Int) -> Unit,
+    onOpenPlayer         : () -> Unit = {},
+    onOpenOnlineSearch   : () -> Unit = {}
 ) {
     val songs       by viewModel.songs.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val isScanning  by viewModel.isScanning.collectAsStateWithLifecycle()
+    val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
 
-    // Navigation 已经处理了 statusBarsPadding，这里直接从搜索框开始
     Column(modifier = Modifier.fillMaxSize()) {
 
-        // 搜索框
+        Row(
+            modifier          = Modifier
+                .statusBarsPadding()
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 4.dp, top = 16.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text     = "音乐库",
+                style    = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onOpenOnlineSearch) {
+                Icon(
+                    imageVector        = Icons.Rounded.CloudQueue,
+                    contentDescription = "云端搜索",
+                    tint               = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                )
+            }
+        }
+
         LibrarySearchBar(
             query         = searchQuery,
             onQueryChange = viewModel::setSearchQuery,
@@ -51,13 +78,19 @@ fun LibraryScreen(
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 20.dp, bottom = 4.dp)
             )
-            LazyColumn(
-                contentPadding = PaddingValues(bottom = 108.dp)
-            ) {
+            LazyColumn(contentPadding = PaddingValues(bottom = 108.dp)) {
                 itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
+                    val isCurrentlyPlaying = currentSong?.id == song.id
                     SongListItem(
-                        song    = song,
-                        onClick = { onSongClick(songs, index) }
+                        song               = song,
+                        isCurrentlyPlaying = isCurrentlyPlaying,
+                        onClick            = {
+                            if (isCurrentlyPlaying) {
+                                onOpenPlayer()
+                            } else {
+                                onSongClick(songs, index)
+                            }
+                        }
                     )
                     if (index < songs.lastIndex) {
                         HorizontalDivider(
@@ -82,7 +115,7 @@ private fun LibrarySearchBar(
         value         = query,
         onValueChange = onQueryChange,
         modifier      = modifier,
-        placeholder   = { Text(" ") },
+        placeholder   = { Text("搜索歌曲") },
         leadingIcon   = { Icon(Icons.Rounded.Search, contentDescription = null) },
         trailingIcon  = {
             if (query.isNotBlank()) {
@@ -100,7 +133,14 @@ private fun LibrarySearchBar(
 }
 
 @Composable
-private fun SongListItem(song: Song, onClick: () -> Unit) {
+private fun SongListItem(
+    song               : Song,
+    isCurrentlyPlaying : Boolean = false,
+    onClick            : () -> Unit
+) {
+    val fallbackPainter = rememberVectorPainter(Icons.Rounded.MusicNote)
+    val context         = LocalContext.current
+
     Row(
         modifier          = Modifier
             .fillMaxWidth()
@@ -109,17 +149,25 @@ private fun SongListItem(song: Song, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         AsyncImage(
-            model              = song.albumArtUri,
+            model = ImageRequest.Builder(context)
+                .data(song.albumArtUri)
+                .crossfade(true)
+                .build(),
             contentDescription = null,
             modifier           = Modifier
-                .size(50.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .size(48.dp)
+                .clip(RoundedCornerShape(8.dp)),
+            placeholder        = fallbackPainter,
+            error              = fallbackPainter,
+            contentScale       = ContentScale.Crop
         )
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text     = song.title,
-                style    = MaterialTheme.typography.titleLarge,
+                style    = MaterialTheme.typography.titleMedium,
+                color    = if (isCurrentlyPlaying) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -145,8 +193,7 @@ private fun LibraryEmpty(isScanning: Boolean) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
-                Icons.Rounded.MusicNote,
-                contentDescription = null,
+                Icons.Rounded.MusicNote, null,
                 modifier = Modifier.size(64.dp),
                 tint     = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
             )
@@ -157,7 +204,7 @@ private fun LibraryEmpty(isScanning: Boolean) {
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                if (isScanning) "请稍候" else "前往左滑到「文件夹」添加目录，再点扫描",
+                if (isScanning) "请稍候" else "前往右滑到「设置」添加目录，再点扫描",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

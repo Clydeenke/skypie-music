@@ -5,10 +5,11 @@ data class Song(
     val title       : String,
     val artist      : String,
     val album       : String,
-    val duration    : Long,     // 毫秒
+    val duration    : Long,
     val uri         : String,
     val albumArtUri : String?,
     val size        : Long,
     val dateAdded   : Long,
-    val folderPath  : String    // 记录来自哪个文件夹
+    val folderPath  : String,
+    val filePath    : String = ""
 )

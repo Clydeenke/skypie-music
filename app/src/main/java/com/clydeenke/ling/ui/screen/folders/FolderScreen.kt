@@ -25,7 +25,10 @@ import com.clydeenke.ling.viewmodel.MusicViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(viewModel: MusicViewModel) {
+fun FolderScreen(
+    viewModel: MusicViewModel,
+    onBack: () -> Unit = {}          // ← 新增，默认空实现，旧代码不用改
+) {
     val context = LocalContext.current
     val folders by viewModel.folders.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
@@ -45,16 +48,20 @@ fun FolderScreen(viewModel: MusicViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { },
+                title = { Text("管理文件夹") },
+                navigationIcon = {
+                    // ← 新增返回按钮
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "返回")
+                    }
+                },
                 actions = {
-                    // 日志按钮
                     IconButton(onClick = { showLogs = !showLogs }) {
                         Icon(
                             if (showLogs) Icons.Rounded.VisibilityOff else Icons.Rounded.Terminal,
                             contentDescription = "扫描日志"
                         )
                     }
-                    // 扫描按钮
                     IconButton(onClick = { viewModel.refresh() }, enabled = !isScanning) {
                         if (isScanning) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
@@ -68,14 +75,15 @@ fun FolderScreen(viewModel: MusicViewModel) {
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { folderPicker.launch(null) },
-                icon = { Icon(Icons.Rounded.Add, null) },
-                text = { Text("添加文件夹") }
+                icon    = { Icon(Icons.Rounded.Add, null) },
+                text    = { Text("添加文件夹") } ,
+                modifier = Modifier.padding(bottom = 80.dp)
             )
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
+            modifier        = Modifier.fillMaxSize().padding(padding),
+            contentPadding  = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (folders.isEmpty()) {
@@ -83,7 +91,7 @@ fun FolderScreen(viewModel: MusicViewModel) {
             } else {
                 items(folders, key = { it.id }) { folder ->
                     FolderItem(
-                        folder = folder,
+                        folder   = folder,
                         onRemove = { viewModel.removeFolder(folder) },
                         onToggle = { viewModel.setFolderEnabled(folder.id, !folder.isEnabled) }
                     )
@@ -97,7 +105,7 @@ fun FolderScreen(viewModel: MusicViewModel) {
                     ScanLogPanel(scanLogs)
                 }
             }
-            item { Spacer(Modifier.height(80.dp)) }
+            item { Spacer(Modifier.height(160.dp)) }
         }
     }
 }
@@ -105,8 +113,8 @@ fun FolderScreen(viewModel: MusicViewModel) {
 @Composable
 private fun FolderItem(folder: ScanFolder, onRemove: () -> Unit, onToggle: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (folder.isEnabled) 1f else 0.5f),
+        shape    = RoundedCornerShape(16.dp),
+        color    = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (folder.isEnabled) 1f else 0.5f),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -134,30 +142,30 @@ private fun ScanLogPanel(logs: List<ScanLog>) {
             Text("实时日志", style = MaterialTheme.typography.titleSmall)
             logs.reversed().take(30).forEach { log ->
                 Text(
-                    text = log.message,
-                    color = when(log.level) {
-                        ScanLog.Level.ERROR -> MaterialTheme.colorScheme.error
+                    text  = log.message,
+                    color = when (log.level) {
+                        ScanLog.Level.ERROR   -> MaterialTheme.colorScheme.error
                         ScanLog.Level.SUCCESS -> Color(0xFF4CAF50)
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else                  -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    style    = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                     modifier = Modifier.padding(vertical = 2.dp)
                 )
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
-                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
             }
         }
     }
 }
 
-// 辅助函数与原版一致，包名已修
 @Composable
 private fun EmptyFoldersPlaceholder(onAdd: () -> Unit) { /* 同上文，略 */ }
+
 @Composable
 private fun ScanInfoCard(count: Int, scanning: Boolean) { /* 同上文，略 */ }
 
 fun resolveDisplayPath(uri: Uri): String {
     val segment = uri.lastPathSegment ?: return uri.toString()
-    return if (segment.startsWith("primary:")) "/storage/emulated/0/${segment.substringAfter(":")}" else segment
+    return if (segment.startsWith("primary:"))
+        "/storage/emulated/0/${segment.substringAfter(":")}"
+    else segment
 }

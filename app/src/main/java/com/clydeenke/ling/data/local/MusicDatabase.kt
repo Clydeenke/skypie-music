@@ -8,8 +8,8 @@ import com.clydeenke.ling.data.local.entity.ScanFolderEntity
 import com.clydeenke.ling.data.local.entity.SongEntity
 
 @Database(
-    entities = [SongEntity::class, ScanFolderEntity::class],
-    version  = 1,
+    entities     = [SongEntity::class, ScanFolderEntity::class],
+    version      = 2,   // ✅ 版本号 +1，触发数据库重建（AppModule 已配置 fallbackToDestructiveMigration）
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {

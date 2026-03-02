@@ -10,6 +10,7 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY dateAdded DESC")
     fun getAllSongs(): Flow<List<SongEntity>>
 
+
     @Query("""
         SELECT * FROM songs
         WHERE title  LIKE '%' || :q || '%'

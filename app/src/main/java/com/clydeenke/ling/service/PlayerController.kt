@@ -2,7 +2,9 @@ package com.clydeenke.ling.service
 
 import android.content.ComponentName
 import android.content.Context
+import android.net.Uri
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -23,14 +25,13 @@ class PlayerController @Inject constructor(
     private var controllerFuture : ListenableFuture<MediaController>? = null
     private var mediaController  : MediaController? = null
 
-    // ✅ 保存播放队列，用 mediaId 而不是 tag 来找歌曲
     private var currentQueue : List<Song> = emptyList()
     private var currentIndex : Int        = 0
 
-    private val _isPlaying       = MutableStateFlow(false)
-    private val _currentSong     = MutableStateFlow<Song?>(null)
-    private val _shuffleMode     = MutableStateFlow(false)
-    private val _repeatMode      = MutableStateFlow(Player.REPEAT_MODE_ALL)
+    private val _isPlaying   = MutableStateFlow(false)
+    private val _currentSong = MutableStateFlow<Song?>(null)
+    private val _shuffleMode = MutableStateFlow(false)
+    private val _repeatMode  = MutableStateFlow(Player.REPEAT_MODE_ALL)
 
     val isPlaying  : StateFlow<Boolean> = _isPlaying.asStateFlow()
     val currentSong: StateFlow<Song?>   = _currentSong.asStateFlow()
@@ -41,10 +42,7 @@ class PlayerController @Inject constructor(
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
         }
-
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
-            // ✅ 关键修复：用 mediaId（song.id.toString()）在本地队列里查歌
-            // MediaItem.localConfiguration.tag 跨进程会丢失，不能用
             val mediaId = item?.mediaId
             if (!mediaId.isNullOrEmpty()) {
                 val song = currentQueue.find { it.id.toString() == mediaId }
@@ -54,11 +52,9 @@ class PlayerController @Inject constructor(
                 }
             }
         }
-
         override fun onShuffleModeEnabledChanged(enabled: Boolean) {
             _shuffleMode.value = enabled
         }
-
         override fun onRepeatModeChanged(mode: Int) {
             _repeatMode.value = mode
         }
@@ -82,22 +78,45 @@ class PlayerController @Inject constructor(
         )
     }
 
+    // ✅ 把封面 URI 塞进 MediaMetadata，通知栏/锁屏/灵动岛才能显示封面
+    private fun Song.toMediaItem(): MediaItem {
+        val artUri = albumArtUri?.let { Uri.parse(it) }
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(artist)
+            .setAlbumTitle(album)
+            .setArtworkUri(artUri)   // ← 关键：封面传给系统
+            .build()
+        return MediaItem.Builder()
+            .setUri(uri)
+            .setMediaId(id.toString())
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
     fun playQueue(songs: List<Song>, startIndex: Int = 0) {
         if (songs.isEmpty()) return
         currentQueue = songs
         currentIndex = startIndex.coerceIn(0, songs.lastIndex)
-
-        val items = songs.map { song ->
-            MediaItem.Builder()
-                .setUri(song.uri)
-                .setMediaId(song.id.toString())  // ✅ 用 mediaId，不用 tag
-                .build()
-        }
+        val items = songs.map { it.toMediaItem() }
         mediaController?.run {
             setMediaItems(items, currentIndex, 0L)
             repeatMode = Player.REPEAT_MODE_ALL
             prepare()
             play()
+        }
+        _currentSong.value = songs.getOrNull(currentIndex)
+    }
+
+    fun restoreQueue(songs: List<Song>, startIndex: Int, positionMs: Long) {
+        if (songs.isEmpty()) return
+        currentQueue = songs
+        currentIndex = startIndex.coerceIn(0, songs.lastIndex)
+        val items = songs.map { it.toMediaItem() }
+        mediaController?.run {
+            setMediaItems(items, currentIndex, positionMs)
+            repeatMode = Player.REPEAT_MODE_ALL
+            prepare()
         }
         _currentSong.value = songs.getOrNull(currentIndex)
     }
@@ -119,10 +138,8 @@ class PlayerController @Inject constructor(
         val mc = mediaController ?: return
         if (currentQueue.isEmpty()) return
         when {
-            mc.currentPosition > 3000   -> mc.seekTo(0L)
-            mc.hasPreviousMediaItem()   -> {
-                mc.seekToPreviousMediaItem()
-            }
+            mc.currentPosition > 3000 -> mc.seekTo(0L)
+            mc.hasPreviousMediaItem() -> mc.seekToPreviousMediaItem()
             else -> {
                 val last = currentQueue.lastIndex
                 mc.seekTo(last, 0L)
@@ -133,10 +150,10 @@ class PlayerController @Inject constructor(
         }
     }
 
-    fun seekTo(ms: Long)    { mediaController?.seekTo(ms) }
-    fun togglePlayPause()   { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
-    fun toggleShuffle()     { mediaController?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }
-    fun toggleRepeat()      {
+    fun seekTo(ms: Long)  { mediaController?.seekTo(ms) }
+    fun togglePlayPause() { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
+    fun toggleShuffle()   { mediaController?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }
+    fun toggleRepeat() {
         mediaController?.let {
             it.repeatMode = when (it.repeatMode) {
                 Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
@@ -148,15 +165,8 @@ class PlayerController @Inject constructor(
 
     fun getCurrentPosition(): Long = mediaController?.currentPosition ?: 0L
     fun getDuration()       : Long = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
-
-    // ── 供全屏 HorizontalPager 使用的辅助方法 ─────────────────────────────
     fun getCurrentQueueSize(): Int = currentQueue.size
-
-    fun getCurrentIndex(): Int = currentIndex.coerceIn(
-        minimumValue = 0,
-        maximumValue = (currentQueue.size - 1).coerceAtLeast(0)
-    )
-
+    fun getCurrentIndex()   : Int  = currentIndex.coerceIn(0, (currentQueue.size - 1).coerceAtLeast(0))
     fun getSongAt(index: Int): Song? = currentQueue.getOrNull(index)
 
     fun playAtIndex(index: Int) {
