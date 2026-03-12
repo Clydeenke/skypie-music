@@ -27,7 +27,7 @@ android {
         minSdk = 26
         targetSdk = 36  // 更新到最新稳定版
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0-beta01"
     }
 
     buildTypes {
@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.documentfile)
+    implementation("androidx.activity:activity-compose:1.8.0")
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

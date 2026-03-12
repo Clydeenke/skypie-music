@@ -10,7 +10,6 @@ interface SongDao {
     @Query("SELECT * FROM songs ORDER BY dateAdded DESC")
     fun getAllSongs(): Flow<List<SongEntity>>
 
-
     @Query("""
         SELECT * FROM songs
         WHERE title  LIKE '%' || :q || '%'
@@ -28,6 +27,10 @@ interface SongDao {
 
     @Query("DELETE FROM songs")
     suspend fun clearAll()
+
+    // ✅ 删除单首歌曲
+    @Query("DELETE FROM songs WHERE id = :id")
+    suspend fun deleteById(id: Long)
 
     @Query("SELECT COUNT(*) FROM songs")
     suspend fun count(): Int

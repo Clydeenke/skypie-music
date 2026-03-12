@@ -1,6 +1,7 @@
 package com.clydeenke.ling.ui.screen.library
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -8,9 +9,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.CloudQueue
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,12 +34,33 @@ fun LibraryScreen(
     viewModel            : MusicViewModel,
     onSongClick          : (songs: List<Song>, index: Int) -> Unit,
     onOpenPlayer         : () -> Unit = {},
-    onOpenOnlineSearch   : () -> Unit = {}
+    onOpenOnlineSearch   : () -> Unit = {},
+    onRefresh            : () -> Unit = {}
 ) {
     val songs       by viewModel.songs.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val isScanning  by viewModel.isScanning.collectAsStateWithLifecycle()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
+
+    // 删除确认弹窗
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
+    if (songToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { songToDelete = null },
+            icon    = { Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error) },
+            title   = { Text("删除歌曲") },
+            text    = { Text("确定要从本地删除「${songToDelete?.title}」吗？此操作不可撤销。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    songToDelete?.let { viewModel.deleteSong(it) }
+                    songToDelete = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { songToDelete = null }) { Text("取消") }
+            }
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
 
@@ -70,7 +94,13 @@ fun LibraryScreen(
         )
 
         if (songs.isEmpty()) {
-            LibraryEmpty(isScanning = isScanning)
+            PullToRefreshBox(
+                isRefreshing = isScanning,
+                onRefresh    = onRefresh,
+                modifier     = Modifier.fillMaxSize()
+            ) {
+                LibraryEmpty(isScanning = isScanning)
+            }
         } else {
             Text(
                 text     = "${songs.size} 首歌曲",
@@ -78,26 +108,30 @@ fun LibraryScreen(
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 20.dp, bottom = 4.dp)
             )
-            LazyColumn(contentPadding = PaddingValues(bottom = 108.dp)) {
-                itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
-                    val isCurrentlyPlaying = currentSong?.id == song.id
-                    SongListItem(
-                        song               = song,
-                        isCurrentlyPlaying = isCurrentlyPlaying,
-                        onClick            = {
-                            if (isCurrentlyPlaying) {
-                                onOpenPlayer()
-                            } else {
-                                onSongClick(songs, index)
-                            }
-                        }
-                    )
-                    if (index < songs.lastIndex) {
-                        HorizontalDivider(
-                            modifier  = Modifier.padding(start = 74.dp),
-                            thickness = 0.5.dp,
-                            color     = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+            PullToRefreshBox(
+                isRefreshing = isScanning,
+                onRefresh    = onRefresh,
+                modifier     = Modifier.fillMaxSize()
+            ) {
+                LazyColumn(contentPadding = PaddingValues(bottom = 108.dp)) {
+                    itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
+                        val isCurrentlyPlaying = currentSong?.id == song.id
+                        SongListItem(
+                            song               = song,
+                            isCurrentlyPlaying = isCurrentlyPlaying,
+                            onClick            = {
+                                if (isCurrentlyPlaying) onOpenPlayer()
+                                else onSongClick(songs, index)
+                            },
+                            onLongClick        = { songToDelete = song }
                         )
+                        if (index < songs.lastIndex) {
+                            HorizontalDivider(
+                                modifier  = Modifier.padding(start = 74.dp),
+                                thickness = 0.5.dp,
+                                color     = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                            )
+                        }
                     }
                 }
             }
@@ -132,11 +166,13 @@ private fun LibrarySearchBar(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SongListItem(
     song               : Song,
     isCurrentlyPlaying : Boolean = false,
-    onClick            : () -> Unit
+    onClick            : () -> Unit,
+    onLongClick        : () -> Unit = {}
 ) {
     val fallbackPainter = rememberVectorPainter(Icons.Rounded.MusicNote)
     val context         = LocalContext.current
@@ -144,7 +180,10 @@ private fun SongListItem(
     Row(
         modifier          = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick     = onClick,
+                onLongClick = onLongClick
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

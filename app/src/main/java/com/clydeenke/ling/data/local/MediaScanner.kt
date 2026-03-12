@@ -7,7 +7,6 @@ import android.provider.MediaStore
 import android.util.Log
 import com.clydeenke.ling.domain.model.ScanLog
 import com.clydeenke.ling.domain.model.Song
-import com.clydeenke.ling.ui.screen.search.getCoverFile
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -126,13 +125,10 @@ class MediaScanner @Inject constructor(
                     val albumId = cursor.getLong(colAlbumId)
                     val data    = cursor.getString(colData) ?: ""
 
-                    // 文件名（不含扩展名），用来找私有目录里的封面
-                    val fileNameNoExt = data.substringAfterLast("/").substringBeforeLast(".")
-
-                    // 优先级：① App私有目录封面（云端下载）→ ② MediaStore封面（本地歌曲）
-                    val privateCover = getCoverFile(context, fileNameNoExt)
-                    val albumArtUri = if (privateCover.exists()) {
-                        "file://${privateCover.absolutePath}"
+                    // 优先用同目录同名 .jpg（云端下载封面），没有才用 MediaStore 封面
+                    val jpgFile = java.io.File(data.substringBeforeLast(".") + ".jpg")
+                    val albumArtUri = if (jpgFile.exists()) {
+                        "file://${jpgFile.absolutePath}"
                     } else {
                         ContentUris.withAppendedId(
                             Uri.parse("content://media/external/audio/albumart"),

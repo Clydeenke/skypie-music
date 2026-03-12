@@ -2,7 +2,6 @@ package com.clydeenke.ling.ui.components
 
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -59,6 +58,8 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import androidx.activity.compose.PredictiveBackHandler
+import kotlinx.coroutines.CancellationException
 
 internal val MiniPlayerHeight = 68.dp
 private  val MiniBottomPad    = 24.dp
@@ -105,7 +106,6 @@ fun SharedPlayerContainer(
                 fun adjustColor(argb: Int, maxLight: Float): Color {
                     val hsl = FloatArray(3)
                     ColorUtils.colorToHSL(argb, hsl)
-                    // 提高饱和度，压低亮度，让颜色更浓
                     hsl[1] = (hsl[1] * 1.3f).coerceAtMost(1.0f)
                     hsl[2] = hsl[2].coerceAtMost(maxLight)
                     return Color(ColorUtils.HSLToColor(hsl))
@@ -173,8 +173,19 @@ fun SharedPlayerContainer(
         val isFullVisible   by remember { derivedStateOf { animOffset.value < dragRange * 0.85f } }
         val isMiniVisible   by remember { derivedStateOf { animOffset.value > dragRange * 0.70f } }
         val isLyricsVisible by remember { derivedStateOf { lyricsSlide.value > 0f } }
-        val isPlayerOpen    by remember { derivedStateOf { animOffset.value < dragRange * 0.99f } }
         val isLyricsOpen    by remember { derivedStateOf { lyricsSlide.value > 1f } }
+
+        // ── isPlayerOpen：只在明确收起/展开时切换，划动过程中不变 ──────────────
+        var isPlayerOpen    by remember { mutableStateOf(false) }
+        var isBackGesturing by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) {
+            snapshotFlow { animOffset.value }
+                .collect { offset ->
+                    if (!isBackGesturing) {
+                        isPlayerOpen = offset < dragRange * 0.1f
+                    }
+                }
+        }
 
         LaunchedEffect(Unit) {
             snapshotFlow { animOffset.value > dragRange * 0.95f }
@@ -188,7 +199,7 @@ fun SharedPlayerContainer(
             val fp  = song?.folderPath ?: return@LaunchedEffect
             val t   = song?.title      ?: return@LaunchedEffect
             val fp2 = song?.filePath   ?: ""
-            val ar = song?.artist ?: ""
+            val ar  = song?.artist     ?: ""
             withContext(Dispatchers.IO) { lrcLines = LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList() }
         }
 
@@ -207,8 +218,36 @@ fun SharedPlayerContainer(
             scope.launch { lyricsSlide.animateTo(if (vy < -400f || (vy in -400f..400f && lyricsSlide.value > screenHPx * 0.4f)) screenHPx else 0f, tween(400, easing = SettleEasing)) }
         }
 
-        BackHandler(enabled = isLyricsOpen) { scope.launch { lyricsSlide.animateTo(0f, tween(400, easing = SettleEasing)) } }
-        BackHandler(enabled = isPlayerOpen) { scope.launch { animOffset.animateTo(dragRange, tween(400, easing = SettleEasing)) } }
+        // ── 关歌词（优先） ────────────────────────────────────────────────────
+        // 修复：progress 0→1 代表"返回进度越来越大"
+        // 歌词完全显示时 lyricsSlide = screenHPx，所以要用 (1 - progress) 才是正确方向
+        PredictiveBackHandler(enabled = isLyricsOpen) { progress ->
+            try {
+                progress.collect { event ->
+                    lyricsSlide.snapTo(screenHPx * (1f - event.progress))
+                }
+                // 手松开，确认返回 → 收起歌词
+                lyricsSlide.animateTo(0f, tween(300, easing = SettleEasing))
+            } catch (e: CancellationException) {
+                // 手缩回去，取消返回 → 恢复歌词
+                lyricsSlide.animateTo(screenHPx, tween(300, easing = SettleEasing))
+            }
+        }
+
+        // ── 关播放器（歌词关闭时才响应） ─────────────────────────────────────
+        PredictiveBackHandler(enabled = isPlayerOpen && !isLyricsOpen) { progress ->
+            isBackGesturing = true
+            try {
+                progress.collect { event ->
+                    animOffset.snapTo(dragRange * event.progress)
+                }
+                animOffset.animateTo(dragRange, tween(300, easing = SettleEasing))
+            } catch (e: CancellationException) {
+                animOffset.animateTo(0f, tween(300, easing = SettleEasing))
+            } finally {
+                isBackGesturing = false
+            }
+        }
 
         val miniGestureMod = Modifier.pointerInput(dragRange) {
             awaitEachGesture {
@@ -255,10 +294,6 @@ fun SharedPlayerContainer(
 
         val surfaceColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
 
-        // ── 流动渐变背景绘制函数（全屏播放和歌词界面共用逻辑） ────────────────
-        // 热点1：绕中心以 flowAngle1 转动，半径 40% 屏宽
-        // 热点2：绕中心以 flowAngle2 转动，半径 30% 屏宽
-        // 背景 = surfaceColor + color1全铺(低透) + 两个热点径向渐变
         fun androidx.compose.ui.graphics.drawscope.DrawScope.drawFlowingBg(
             alpha: Float = 1f,
             width: Float = size.width,
@@ -269,11 +304,9 @@ fun SharedPlayerContainer(
             val cy = height / 2f
             val r  = width.coerceAtLeast(height)
 
-            // 底色：color1 低透明度铺满
             val baseAlpha = if (isDark) 0.55f else 0.70f
             drawRect(color = color1.copy(alpha = baseAlpha * alpha), size = Size(width, height))
 
-            // 热点1：color2，左上→右下游走
             val h1x = cx + cos(flowAngle1) * width * 0.42f
             val h1y = cy + sin(flowAngle1) * height * 0.35f
             drawCircle(
@@ -286,7 +319,6 @@ fun SharedPlayerContainer(
                 center = Offset(h1x, h1y)
             )
 
-            // 热点2：color3，右上→左下游走（反向）
             val h2x = cx + cos(flowAngle2) * width * 0.38f
             val h2y = cy + sin(flowAngle2) * height * 0.40f
             drawCircle(
@@ -299,7 +331,6 @@ fun SharedPlayerContainer(
                 center = Offset(h2x, h2y)
             )
 
-            // 底部压暗，避免控件看不清
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(Color.Transparent, Color.Black.copy(alpha = (if (isDark) 0.55f else 0.30f) * alpha)),
@@ -323,7 +354,6 @@ fun SharedPlayerContainer(
                     drawRoundRect(color = surfaceColor, topLeft = Offset(bgX, 0f), size = Size(bgW, bgH), cornerRadius = cr)
 
                     if (p > 0.01f) {
-                        // 裁剪到卡片区域再画流动背景
                         val clipPath = androidx.compose.ui.graphics.Path().apply {
                             addRoundRect(androidx.compose.ui.geometry.RoundRect(
                                 left = bgX, top = 0f, right = bgX + bgW, bottom = bgH,
@@ -356,14 +386,13 @@ fun SharedPlayerContainer(
                                     alpha        = frac
                                 }
                         ) {
-                            // 歌词界面：同款流动背景
                             Box(Modifier.fillMaxSize().drawBehind {
                                 drawRect(surfaceColor)
                                 drawFlowingBg()
                             })
                             LyricsScreen(
-                                lrcLines = lrcLines,
-                                currentMs  = currentMsForLyrics,
+                                lrcLines  = lrcLines,
+                                currentMs = currentMsForLyrics,
                                 onCollapse = { scope.launch { lyricsSlide.animateTo(0f, tween(400, easing = SettleEasing)) } },
                                 onSeekTo   = { ms -> viewModel.playerController.seekTo(ms) },
                                 modifier   = Modifier.fillMaxSize().statusBarsPadding()
@@ -392,7 +421,6 @@ fun SharedPlayerContainer(
                             val sinkFrac = ((1f - animOffset.value / dragRange) / 0.30f).coerceIn(0f, 1f)
                             alpha        = 1f - sinkFrac
                             translationY = with(density) { 60.dp.toPx() } * sinkFrac
-
                         }
                 ) {
                     MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod)
@@ -407,9 +435,7 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
     val song      by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.playerController.isPlaying.collectAsStateWithLifecycle()
     val s = song ?: return
-    // 玻璃效果下用半透明背景
-    val bgColor = Color.White.copy(alpha = 0.08f)  // 透明，让底下的流动渐变透过来
-
+    val bgColor = Color.White.copy(alpha = 0.08f)
     val radius = MiniPlayerHeight / 2
     val isDark = isSystemInDarkTheme()
 
@@ -418,7 +444,6 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
             .fillMaxWidth()
             .height(MiniPlayerHeight)
     ) {
-        // ── 层1：模糊层（只模糊这一层的纯色，不碰上面内容） ────────────────
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -432,19 +457,16 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
                     shape = RoundedCornerShape(radius)
                 }
                 .drawBehind {
-                    // 半透明底色 - 这个颜色会被模糊，产生磨砂感
                     drawRoundRect(
                         color        = bgColor,
                         cornerRadius = CornerRadius(size.height / 2f)
                     )
                 }
         )
-        // ── 层2：折射高光 + 边框（内容之下，模糊层之上） ────────────────────
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .drawBehind {
-                    // 顶部白色高光条，模拟玻璃折射
                     val highlightAlpha = if (isDark) 0.18f else 0.35f
                     drawRoundRect(
                         brush = Brush.verticalGradient(
@@ -456,7 +478,6 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
                         ),
                         cornerRadius = CornerRadius(size.height / 2f)
                     )
-                    // 细边框
                     drawRoundRect(
                         color        = Color.White.copy(alpha = if (isDark) 0.12f else 0.25f),
                         cornerRadius = CornerRadius(size.height / 2f),
@@ -464,7 +485,6 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
                     )
                 }
         )
-        // ── 层3：实际内容（完全清晰，不受任何模糊影响） ──────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth().height(MiniPlayerHeight)
@@ -494,8 +514,8 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
                 Icon(Icons.Rounded.SkipNext, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
             }
             Spacer(Modifier.width(2.dp))
-        }  // end Row (content layer)
-    }  // end outer Box (glass card)
+        }
+    }
 }
 
 @Composable
@@ -542,7 +562,7 @@ private fun FullPlayer(
     }
 
     val displaySong = controller.getSongAt(pagerState.currentPage) ?: song
-    val onBg = Color.White  // 流动背景上强制白色，确保可读
+    val onBg = Color.White
 
     val fadeAlpha = Modifier.graphicsLayer {
         val p = (1f - animOffset.value / dragRange).coerceIn(0f, 1f)
