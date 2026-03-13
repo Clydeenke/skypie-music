@@ -1,7 +1,10 @@
 package com.clydeenke.ling.ui.screen.search
 
 import android.os.Environment
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
@@ -18,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.clydeenke.ling.viewmodel.MusicViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,12 +49,22 @@ sealed class DownloadState {
     data class Error(val msg: String) : DownloadState()
 }
 
+// 在线播放状态（每首歌独立）
+sealed class PlayState {
+    object Idle       : PlayState()
+    object Resolving  : PlayState()   // 正在获取播放链接
+    object Playing    : PlayState()   // 当前正在播放这首
+    data class Error(val msg: String) : PlayState()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnlineSearchScreen(
     apiBaseUrl         : String,
+    viewModel          : MusicViewModel,              // ← 新增，用于触发在线播放
     onBack             : () -> Unit = {},
-    onDownloadComplete : () -> Unit = {}
+    onDownloadComplete : () -> Unit = {},
+    onOpenPlayer       : () -> Unit = {}              // ← 新增，播放后打开全屏播放器
 ){
     val context = LocalContext.current
     val scope   = rememberCoroutineScope()
@@ -64,6 +78,10 @@ fun OnlineSearchScreen(
     val isSearching    = remember { mutableStateMapOf<Int, Boolean>() }
     val errorMsgs      = remember { mutableStateMapOf<Int, String?>() }
     val downloadStates = remember { mutableStateMapOf<String, DownloadState>() }
+    val playStates     = remember { mutableStateMapOf<String, PlayState>() }
+
+    // 当前正在播放的在线歌曲ID（同一时间只有一首）
+    var currentPlayingId by remember { mutableStateOf<String?>(null) }
 
     fun doSearch(tabIndex: Int = pagerState.currentPage) {
         if (query.isBlank()) return
@@ -84,10 +102,59 @@ fun OnlineSearchScreen(
         }
     }
 
-    // 切 Tab 时如果有关键词且还没搜过，自动搜索
     LaunchedEffect(pagerState.currentPage) {
         val idx = pagerState.currentPage
         if (query.isNotBlank() && results[idx] == null) doSearch(idx)
+    }
+
+    // 在线播放：解析URL → 获取歌词 → 调PlayerController直接播放
+    fun doPlay(song: OnlineSong) {
+        scope.launch {
+            // 如果点了正在播放的那首，直接打开播放器
+            if (currentPlayingId == song.id) {
+                onOpenPlayer()
+                return@launch
+            }
+
+            // 标记"解析中"
+            playStates[song.id] = PlayState.Resolving
+            currentPlayingId?.let { playStates[it] = PlayState.Idle }
+            currentPlayingId = song.id
+
+            try {
+                val streamUrl = when (song.source) {
+                    MusicSource.KUWO   -> resolveKuwoUrl(apiBaseUrl, song.id)
+                    MusicSource.KUGOU  -> resolveKugouUrl(apiBaseUrl, song.id)
+                }
+                if (streamUrl.isNullOrBlank()) {
+                    playStates[song.id] = PlayState.Error("获取链接失败")
+                    currentPlayingId = null
+                    return@launch
+                }
+
+                val lrcText = withContext(Dispatchers.IO) {
+                    when (song.source) {
+                        MusicSource.KUWO   -> fetchKuwoLyric(song.id)
+                        MusicSource.KUGOU  -> fetchKugouLyric(song.id)
+                    }
+                }
+
+                // 直接播放，不下载，把歌词文本也传进去
+                viewModel.playerController.playOnlineStream(
+                    streamUrl = streamUrl,
+                    title     = song.title,
+                    artist    = song.artist,
+                    coverUrl  = song.coverUrl,
+                    songId    = song.id,
+                    lrcText   = lrcText
+                )
+                playStates[song.id] = PlayState.Playing
+                onOpenPlayer()
+            } catch (e: Exception) {
+                playStates[song.id] = PlayState.Error(e.message ?: "播放失败")
+                currentPlayingId = null
+            }
+        }
     }
 
     fun doDownload(song: OnlineSong) {
@@ -95,8 +162,8 @@ fun OnlineSearchScreen(
             downloadStates[song.id] = DownloadState.Loading
             try {
                 val playUrl = when (song.source) {
-                    MusicSource.KUWO  -> resolveKuwoUrl(apiBaseUrl, song.id)
-                    MusicSource.KUGOU -> resolveKugouUrl(apiBaseUrl, song.id)
+                    MusicSource.KUWO    -> resolveKuwoUrl(apiBaseUrl, song.id)
+                    MusicSource.KUGOU   -> resolveKugouUrl(apiBaseUrl, song.id)
                 }
                 if (playUrl.isNullOrBlank()) {
                     downloadStates[song.id] = DownloadState.Error("获取链接失败")
@@ -113,11 +180,9 @@ fun OnlineSearchScreen(
                 val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
 
                 withContext(Dispatchers.IO) {
-                    // 1️⃣ 下载音频
                     val audioFile = java.io.File(musicDir, "$safeName.$ext")
                     URL(playUrl).openStream().use { i -> audioFile.outputStream().use { o -> i.copyTo(o) } }
 
-                    // 2️⃣ 下载封面
                     if (song.coverUrl.isNotBlank()) {
                         try {
                             val coverFile = java.io.File(musicDir, "$safeName.jpg")
@@ -125,16 +190,14 @@ fun OnlineSearchScreen(
                         } catch (_: Exception) {}
                     }
 
-                    // 3️⃣ 下载歌词
                     val lrcText = when (song.source) {
-                        MusicSource.KUWO  -> fetchKuwoLyric(song.id)
-                        MusicSource.KUGOU -> fetchKugouLyric(song.id)
+                        MusicSource.KUWO    -> fetchKuwoLyric(song.id)
+                        MusicSource.KUGOU   -> fetchKugouLyric(song.id)
                     }
                     if (lrcText.isNotBlank()) {
                         java.io.File(musicDir, "$safeName.lrc").writeText(lrcText, Charsets.UTF_8)
                     }
 
-                    // 4️⃣ 通知 MediaStore
                     android.media.MediaScannerConnection.scanFile(
                         context,
                         arrayOf(java.io.File(musicDir, "$safeName.$ext").absolutePath),
@@ -236,7 +299,9 @@ fun OnlineSearchScreen(
                             OnlineSongItem(
                                 song          = song,
                                 downloadState = downloadStates[song.id] ?: DownloadState.Idle,
-                                onDownload    = { doDownload(song) }
+                                playState     = playStates[song.id] ?: PlayState.Idle,
+                                onDownload    = { doDownload(song) },
+                                onPlay        = { doPlay(song) }
                             )
                             if (index < pageResults.lastIndex) {
                                 HorizontalDivider(
@@ -257,35 +322,97 @@ fun OnlineSearchScreen(
 private fun OnlineSongItem(
     song          : OnlineSong,
     downloadState : DownloadState,
-    onDownload    : () -> Unit
+    playState     : PlayState,
+    onDownload    : () -> Unit,
+    onPlay        : () -> Unit
 ) {
     Row(
-        modifier          = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            // 整行点击 = 播放
+            .clickable(onClick = onPlay)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        AsyncImage(song.coverUrl, null, Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(song.title, style = MaterialTheme.typography.titleMedium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(2.dp))
-            Text("${song.artist} · ${song.album}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // 封面：正在解析时显示转圈
+        Box(
+            modifier         = Modifier.size(50.dp).clip(RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(song.coverUrl, null, Modifier.matchParentSize())
+            if (playState is PlayState.Resolving) {
+                Box(
+                    Modifier
+                        .matchParentSize()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                )
+                CircularProgressIndicator(
+                    modifier    = Modifier.size(22.dp),
+                    strokeWidth = 2.dp,
+                    color       = Color.White
+                )
+            }
         }
-        Text(formatSec(song.duration), style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(8.dp))
+
+        Spacer(Modifier.width(14.dp))
+
+        // 歌曲信息
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                song.title,
+                style    = MaterialTheme.typography.titleMedium,
+                color    = if (playState is PlayState.Playing)
+                    MaterialTheme.colorScheme.primary
+                else
+                    MaterialTheme.colorScheme.onSurface,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // 播放中显示小均衡器图标
+                if (playState is PlayState.Playing) {
+                    Icon(Icons.Rounded.GraphicEq, null,
+                        modifier = Modifier.size(13.dp),
+                        tint     = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(3.dp))
+                }
+                Text(
+                    "${song.artist} · ${song.album}",
+                    style    = MaterialTheme.typography.bodyMedium,
+                    color    = if (playState is PlayState.Playing)
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                    else
+                        MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        // 时长
+        Text(
+            formatSec(song.duration),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(4.dp))
+
+        // 只保留下载按钮
         when (downloadState) {
             is DownloadState.Idle    -> IconButton(onClick = onDownload, Modifier.size(40.dp)) {
-                Icon(Icons.Rounded.Download, "下载", tint = MaterialTheme.colorScheme.primary) }
+                Icon(Icons.Rounded.Download, "下载",
+                    tint = MaterialTheme.colorScheme.primary)
+            }
             is DownloadState.Loading -> Box(Modifier.size(40.dp), Alignment.Center) {
-                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) }
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            }
             is DownloadState.Done    -> Box(Modifier.size(40.dp), Alignment.Center) {
-                Icon(Icons.Rounded.CheckCircle, "完成", tint = MaterialTheme.colorScheme.primary) }
+                Icon(Icons.Rounded.CheckCircle, "完成",
+                    tint = MaterialTheme.colorScheme.primary)
+            }
             is DownloadState.Error   -> IconButton(onClick = onDownload, Modifier.size(40.dp)) {
-                Icon(Icons.Rounded.ErrorOutline, "重试", tint = MaterialTheme.colorScheme.error) }
+                Icon(Icons.Rounded.ErrorOutline, "重试",
+                    tint = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }
@@ -309,7 +436,7 @@ private suspend fun searchKuwo(keyword: String): List<OnlineSong> = withContext(
         val picShort = item.optString("web_albumpic_short").ifBlank { item.optString("MVPIC") }
         val cover = when {
             picShort.startsWith("http") -> picShort
-            picShort.isNotBlank() -> "https://img2.kuwo.cn/star/albumcover/${picShort.replaceFirst(Regex("^\\d+/"), "500/")}"
+            picShort.isNotBlank() -> "https://img2.kuwo.cn/star/albumcover/${picShort.replaceFirst(Regex("^\\d+/"), "800/")}"
             else -> ""
         }
         OnlineSong(id, title,
@@ -362,8 +489,7 @@ private suspend fun searchKugou(keyword: String): List<OnlineSong> = withContext
             val item  = list.getJSONObject(i)
             val title = item.optString("SongName").ifBlank { return@mapNotNull null }
             val hash  = item.optString("FileHash").ifBlank { return@mapNotNull null }
-            // 封面：把 {size} 替换成 400
-            val cover = item.optString("Image").replace("{size}", "400")
+            val cover = item.optString("Image").replace("{size}", "800")
             OnlineSong(
                 id       = hash,
                 title    = title,
@@ -379,11 +505,10 @@ private suspend fun searchKugou(keyword: String): List<OnlineSong> = withContext
 
 private suspend fun resolveKugouUrl(apiBase: String, hash: String): String? = withContext(Dispatchers.IO) {
     try {
-        val base = apiBase.trimEnd('/')
-        // 从 kw.php 路径推断 kg.php 路径
+        val base   = apiBase.trimEnd('/')
         val kgBase = base.replace("/music/kw.php", "").replace(Regex("/music$"), "")
-        val text = URL("$kgBase/kgqq/kg.php?id=$hash&level=standard").readText()
-        val json = JSONObject(text)
+        val text   = URL("$kgBase/kgqq/kg.php?id=$hash&level=standard").readText()
+        val json   = JSONObject(text)
         if (json.optInt("code") == 200) json.getJSONObject("data").optString("url") else null
     } catch (_: Exception) { null }
 }
@@ -396,30 +521,7 @@ private suspend fun fetchKugouLyric(hash: String): String = withContext(Dispatch
         conn.connectTimeout = 6000; conn.readTimeout = 6000
         val text = conn.inputStream.bufferedReader().readText()
         conn.disconnect()
-        // 直接返回 LRC 文本，不需要解码
         text
-    } catch (_: Exception) { "" }
-}
-
-private suspend fun resolveNeteaseUrl(apiBase: String, songId: String): String? = withContext(Dispatchers.IO) {
-    try {
-        val base = apiBase.trimEnd('/')
-        val wyBase = base.replace("/music/kw.php", "").replace(Regex("/music$"), "")
-        val text = URL("$wyBase/wy/wy.php?id=$songId&type=json&level=standard").readText()
-        val json = JSONObject(text)
-        if (json.optInt("code") == 200) json.getJSONObject("data").optString("url") else null
-    } catch (_: Exception) { null }
-}
-
-private suspend fun fetchNeteaseLyric(songId: String): String = withContext(Dispatchers.IO) {
-    try {
-        val url  = "http://music.163.com/api/song/lyric?id=$songId&os=Linux&lv=-1&kv=-1&tv=-1"
-        val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-        conn.setRequestProperty("Referer", "https://music.163.com")
-        conn.connectTimeout = 6000; conn.readTimeout = 6000
-        val text = conn.inputStream.bufferedReader().readText(); conn.disconnect()
-        JSONObject(text).optJSONObject("lrc")?.optString("lyric") ?: ""
     } catch (_: Exception) { "" }
 }
 

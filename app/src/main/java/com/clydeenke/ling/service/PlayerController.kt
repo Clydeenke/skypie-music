@@ -28,15 +28,20 @@ class PlayerController @Inject constructor(
     private var currentQueue : List<Song> = emptyList()
     private var currentIndex : Int        = 0
 
-    private val _isPlaying   = MutableStateFlow(false)
-    private val _currentSong = MutableStateFlow<Song?>(null)
-    private val _shuffleMode = MutableStateFlow(false)
-    private val _repeatMode  = MutableStateFlow(Player.REPEAT_MODE_ALL)
+    private val _isPlaying    = MutableStateFlow(false)
+    private val _currentSong  = MutableStateFlow<Song?>(null)
+    private val _shuffleMode  = MutableStateFlow(false)
+    private val _repeatMode   = MutableStateFlow(Player.REPEAT_MODE_ALL)
+    // 当前是否在播放在线流（用于UI判断，比如不显示删除按钮）
+    private val _isOnlineMode   = MutableStateFlow(false)
+    private val _onlineLrcText  = MutableStateFlow("")   // 在线播放时的歌词文本
 
-    val isPlaying  : StateFlow<Boolean> = _isPlaying.asStateFlow()
-    val currentSong: StateFlow<Song?>   = _currentSong.asStateFlow()
-    val shuffleMode: StateFlow<Boolean> = _shuffleMode.asStateFlow()
-    val repeatMode : StateFlow<Int>     = _repeatMode.asStateFlow()
+    val isPlaying    : StateFlow<Boolean> = _isPlaying.asStateFlow()
+    val currentSong  : StateFlow<Song?>   = _currentSong.asStateFlow()
+    val shuffleMode  : StateFlow<Boolean> = _shuffleMode.asStateFlow()
+    val repeatMode   : StateFlow<Int>     = _repeatMode.asStateFlow()
+    val isOnlineMode : StateFlow<Boolean> = _isOnlineMode.asStateFlow()
+    val onlineLrcText: StateFlow<String>  = _onlineLrcText.asStateFlow()
 
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -78,14 +83,13 @@ class PlayerController @Inject constructor(
         )
     }
 
-    // ✅ 把封面 URI 塞进 MediaMetadata，通知栏/锁屏/灵动岛才能显示封面
     private fun Song.toMediaItem(): MediaItem {
         val artUri = albumArtUri?.let { Uri.parse(it) }
         val metadata = MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
             .setAlbumTitle(album)
-            .setArtworkUri(artUri)   // ← 关键：封面传给系统
+            .setArtworkUri(artUri)
             .build()
         return MediaItem.Builder()
             .setUri(uri)
@@ -96,6 +100,7 @@ class PlayerController @Inject constructor(
 
     fun playQueue(songs: List<Song>, startIndex: Int = 0) {
         if (songs.isEmpty()) return
+        _isOnlineMode.value = false
         currentQueue = songs
         currentIndex = startIndex.coerceIn(0, songs.lastIndex)
         val items = songs.map { it.toMediaItem() }
@@ -110,6 +115,7 @@ class PlayerController @Inject constructor(
 
     fun restoreQueue(songs: List<Song>, startIndex: Int, positionMs: Long) {
         if (songs.isEmpty()) return
+        _isOnlineMode.value = false
         currentQueue = songs
         currentIndex = startIndex.coerceIn(0, songs.lastIndex)
         val items = songs.map { it.toMediaItem() }
@@ -119,6 +125,58 @@ class PlayerController @Inject constructor(
             prepare()
         }
         _currentSong.value = songs.getOrNull(currentIndex)
+    }
+
+    /**
+     * 在线流媒体播放：直接给一个 HTTP URL，不需要下载
+     * ExoPlayer / Media3 原生支持 HTTP 音频流
+     */
+    fun playOnlineStream(
+        streamUrl : String,
+        title     : String,
+        artist    : String,
+        coverUrl  : String = "",
+        songId    : String = "online",
+        lrcText   : String = ""
+    ) {
+        _isOnlineMode.value  = true
+        _onlineLrcText.value = lrcText
+
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setArtist(artist)
+            .setArtworkUri(if (coverUrl.isNotBlank()) Uri.parse(coverUrl) else null)
+            .build()
+
+        val item = MediaItem.Builder()
+            .setUri(streamUrl)
+            .setMediaId("online_$songId")
+            .setMediaMetadata(metadata)
+            .build()
+
+        // 用一个虚拟 Song 让迷你/全屏播放器正常显示歌曲信息
+        val fakeSong = Song(
+            id          = -1L,
+            title       = title,
+            artist      = artist,
+            album       = "在线播放",
+            uri         = streamUrl,
+            albumArtUri = coverUrl.ifBlank { null },
+            filePath    = "",
+            folderPath  = "",
+            duration    = 0L,
+            size        = 0L,
+            dateAdded   = 0L
+        )
+        currentQueue = listOf(fakeSong)
+        currentIndex = 0
+        _currentSong.value = fakeSong
+
+        mediaController?.run {
+            setMediaItem(item)
+            prepare()
+            play()
+        }
     }
 
     fun skipToNext() {

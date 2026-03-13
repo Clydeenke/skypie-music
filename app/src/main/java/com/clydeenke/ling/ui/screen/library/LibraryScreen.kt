@@ -28,14 +28,13 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.clydeenke.ling.domain.model.Song
 import com.clydeenke.ling.viewmodel.MusicViewModel
-
 @Composable
 fun LibraryScreen(
-    viewModel            : MusicViewModel,
-    onSongClick          : (songs: List<Song>, index: Int) -> Unit,
-    onOpenPlayer         : () -> Unit = {},
-    onOpenOnlineSearch   : () -> Unit = {},
-    onRefresh            : () -> Unit = {}
+    viewModel          : MusicViewModel,
+    onSongClick        : (songs: List<Song>, index: Int) -> Unit,
+    onOpenPlayer       : () -> Unit = {},
+    onOpenOnlineSearch : () -> Unit = {},
+    onRefresh          : () -> Unit = {}
 ) {
     val songs       by viewModel.songs.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()

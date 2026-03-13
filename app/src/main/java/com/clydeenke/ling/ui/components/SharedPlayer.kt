@@ -2,6 +2,8 @@ package com.clydeenke.ling.ui.components
 
 import android.graphics.drawable.BitmapDrawable
 import android.os.Build
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -19,7 +21,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.background
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -69,19 +74,19 @@ private  val FullPagerPad     = 4.dp
 private val TapSpring    = spring<Float>(stiffness = 320f, dampingRatio = Spring.DampingRatioNoBouncy)
 private val SettleEasing = CubicBezierEasing(0.2f, 0.0f, 0f, 1.0f)
 
-// 从封面提取的三种颜色
 private data class AlbumPalette(
-    val color1: Color = Color.Transparent,  // 主色
-    val color2: Color = Color.Transparent,  // 鲜艳色
-    val color3: Color = Color.Transparent   // 深色/第三色
+    val color1: Color = Color.Transparent,
+    val color2: Color = Color.Transparent,
+    val color3: Color = Color.Transparent
 )
 
 @Composable
 fun SharedPlayerContainer(
     viewModel           : MusicViewModel,
-    openPlayerRequested : Boolean = false,
+    openPlayerRequested : Boolean    = false,
     onOpenPlayerHandled : () -> Unit = {},
-    modifier            : Modifier = Modifier
+    hazeState           : HazeState,
+    modifier            : Modifier   = Modifier
 ) {
     val song by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     if (song == null) return
@@ -91,7 +96,6 @@ fun SharedPlayerContainer(
     val scope   = rememberCoroutineScope()
     val isDark  = isSystemInDarkTheme()
 
-    // ── 封面颜色提取（3种颜色） ────────────────────────────────────────────────
     var rawPalette by remember { mutableStateOf(AlbumPalette()) }
     LaunchedEffect(song?.albumArtUri) {
         val uri = song?.albumArtUri ?: run { rawPalette = AlbumPalette(); return@LaunchedEffect }
@@ -124,24 +128,22 @@ fun SharedPlayerContainer(
         }
     }
 
-    // 切歌颜色过渡
     val color1 by animateColorAsState(rawPalette.color1, tween(1000), label = "c1")
     val color2 by animateColorAsState(rawPalette.color2, tween(1200), label = "c2")
     val color3 by animateColorAsState(rawPalette.color3, tween(1400), label = "c3")
 
-    // ── 流动动画：两个"热点"缓慢移动 ─────────────────────────────────────────
     val infiniteTransition = rememberInfiniteTransition(label = "flow")
     val flowAngle1 by infiniteTransition.animateFloat(
-        initialValue   = 0f,
-        targetValue    = (2 * Math.PI).toFloat(),
-        animationSpec  = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
-        label          = "angle1"
+        initialValue  = 0f,
+        targetValue   = (2 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
+        label         = "angle1"
     )
     val flowAngle2 by infiniteTransition.animateFloat(
-        initialValue   = (Math.PI).toFloat(),
-        targetValue    = (3 * Math.PI).toFloat(),
-        animationSpec  = infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Restart),
-        label          = "angle2"
+        initialValue  = (Math.PI).toFloat(),
+        targetValue   = (3 * Math.PI).toFloat(),
+        animationSpec = infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Restart),
+        label         = "angle2"
     )
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -156,7 +158,6 @@ fun SharedPlayerContainer(
         val animOffset  = remember { Animatable(dragRange, Float.VectorConverter) }
         val lyricsSlide = remember { Animatable(0f, Float.VectorConverter) }
 
-        // 外部请求打开全屏播放器
         LaunchedEffect(openPlayerRequested) {
             if (openPlayerRequested) {
                 animOffset.animateTo(0f, tween(400, easing = SettleEasing))
@@ -175,7 +176,6 @@ fun SharedPlayerContainer(
         val isLyricsVisible by remember { derivedStateOf { lyricsSlide.value > 0f } }
         val isLyricsOpen    by remember { derivedStateOf { lyricsSlide.value > 1f } }
 
-        // ── isPlayerOpen：只在明确收起/展开时切换，划动过程中不变 ──────────────
         var isPlayerOpen    by remember { mutableStateOf(false) }
         var isBackGesturing by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
@@ -194,13 +194,26 @@ fun SharedPlayerContainer(
         }
 
         var lrcLines by remember { mutableStateOf<List<LrcLine>>(emptyList()) }
-        LaunchedEffect(song?.id) {
+        val onlineLrcText by viewModel.playerController.onlineLrcText.collectAsStateWithLifecycle()
+        val isOnlineMode  by viewModel.playerController.isOnlineMode.collectAsStateWithLifecycle()
+
+        LaunchedEffect(song?.id, isOnlineMode, onlineLrcText) {
             lrcLines = emptyList()
-            val fp  = song?.folderPath ?: return@LaunchedEffect
-            val t   = song?.title      ?: return@LaunchedEffect
-            val fp2 = song?.filePath   ?: ""
-            val ar  = song?.artist     ?: ""
-            withContext(Dispatchers.IO) { lrcLines = LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList() }
+            if (isOnlineMode) {
+                // 在线播放：直接解析内存里的歌词文本
+                if (onlineLrcText.isNotBlank()) {
+                    withContext(Dispatchers.IO) {
+                        lrcLines = LrcParser.parse(onlineLrcText)
+                    }
+                }
+            } else {
+                // 本地播放：从文件读
+                val fp  = song?.folderPath ?: return@LaunchedEffect
+                val t   = song?.title      ?: return@LaunchedEffect
+                val fp2 = song?.filePath   ?: ""
+                val ar  = song?.artist     ?: ""
+                withContext(Dispatchers.IO) { lrcLines = LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList() }
+            }
         }
 
         var currentMsForLyrics by remember { mutableLongStateOf(0L) }
@@ -218,29 +231,19 @@ fun SharedPlayerContainer(
             scope.launch { lyricsSlide.animateTo(if (vy < -400f || (vy in -400f..400f && lyricsSlide.value > screenHPx * 0.4f)) screenHPx else 0f, tween(400, easing = SettleEasing)) }
         }
 
-        // ── 关歌词（优先） ────────────────────────────────────────────────────
-        // 修复：progress 0→1 代表"返回进度越来越大"
-        // 歌词完全显示时 lyricsSlide = screenHPx，所以要用 (1 - progress) 才是正确方向
         PredictiveBackHandler(enabled = isLyricsOpen) { progress ->
             try {
-                progress.collect { event ->
-                    lyricsSlide.snapTo(screenHPx * (1f - event.progress))
-                }
-                // 手松开，确认返回 → 收起歌词
+                progress.collect { event -> lyricsSlide.snapTo(screenHPx * (1f - event.progress)) }
                 lyricsSlide.animateTo(0f, tween(300, easing = SettleEasing))
             } catch (e: CancellationException) {
-                // 手缩回去，取消返回 → 恢复歌词
                 lyricsSlide.animateTo(screenHPx, tween(300, easing = SettleEasing))
             }
         }
 
-        // ── 关播放器（歌词关闭时才响应） ─────────────────────────────────────
         PredictiveBackHandler(enabled = isPlayerOpen && !isLyricsOpen) { progress ->
             isBackGesturing = true
             try {
-                progress.collect { event ->
-                    animOffset.snapTo(dragRange * event.progress)
-                }
+                progress.collect { event -> animOffset.snapTo(dragRange * event.progress) }
                 animOffset.animateTo(dragRange, tween(300, easing = SettleEasing))
             } catch (e: CancellationException) {
                 animOffset.animateTo(0f, tween(300, easing = SettleEasing))
@@ -300,44 +303,29 @@ fun SharedPlayerContainer(
             height: Float = size.height
         ) {
             if (color1 == Color.Transparent) return
-            val cx = width / 2f
-            val cy = height / 2f
+            val cx = width / 2f; val cy = height / 2f
             val r  = width.coerceAtLeast(height)
-
             val baseAlpha = if (isDark) 0.55f else 0.70f
             drawRect(color = color1.copy(alpha = baseAlpha * alpha), size = Size(width, height))
-
             val h1x = cx + cos(flowAngle1) * width * 0.42f
             val h1y = cy + sin(flowAngle1) * height * 0.35f
             drawCircle(
                 brush  = Brush.radialGradient(
-                    colors      = listOf(color2.copy(alpha = (if (isDark) 0.85f else 0.90f) * alpha), Color.Transparent),
-                    center      = Offset(h1x, h1y),
-                    radius      = r * 0.75f
-                ),
-                radius = r * 0.75f,
-                center = Offset(h1x, h1y)
-            )
-
+                    colors = listOf(color2.copy(alpha = (if (isDark) 0.85f else 0.90f) * alpha), Color.Transparent),
+                    center = Offset(h1x, h1y), radius = r * 0.75f),
+                radius = r * 0.75f, center = Offset(h1x, h1y))
             val h2x = cx + cos(flowAngle2) * width * 0.38f
             val h2y = cy + sin(flowAngle2) * height * 0.40f
             drawCircle(
                 brush  = Brush.radialGradient(
                     colors = listOf(color3.copy(alpha = (if (isDark) 0.75f else 0.80f) * alpha), Color.Transparent),
-                    center = Offset(h2x, h2y),
-                    radius = r * 0.65f
-                ),
-                radius = r * 0.65f,
-                center = Offset(h2x, h2y)
-            )
-
+                    center = Offset(h2x, h2y), radius = r * 0.65f),
+                radius = r * 0.65f, center = Offset(h2x, h2y))
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(Color.Transparent, Color.Black.copy(alpha = (if (isDark) 0.55f else 0.30f) * alpha)),
-                    startY = height * 0.45f, endY = height
-                ),
-                size = Size(width, height)
-            )
+                    startY = height * 0.45f, endY = height),
+                size = Size(width, height))
         }
 
         Box(
@@ -345,13 +333,27 @@ fun SharedPlayerContainer(
                 .fillMaxSize()
                 .offset { IntOffset(0, animOffset.value.roundToInt()) }
                 .drawBehind {
-                    val p   = (1f - animOffset.value / dragRange).coerceIn(0f, 1f)
+                    val p = (1f - animOffset.value / dragRange).coerceIn(0f, 1f)
+
+                    // ✅ 关键改动：p=0（迷你状态）时完全不画背景卡片
+                    // 让迷你播放条自己的玻璃层负责背景，不再遮挡它
+                    // p>0 开始往上滑时，卡片背景慢慢淡入
+                    if (p <= 0f) return@drawBehind
+
+                    // 前15%的滑动行程里，卡片从透明渐变到不透明（过渡更自然）
+                    val cardAlpha = (p / 0.15f).coerceIn(0f, 1f)
+
                     val bgX = sidePx * (1f - p)
                     val bgW = size.width - 2f * sidePx * (1f - p)
                     val bgH = miniHPx + (size.height - miniHPx) * p
                     val cr  = CornerRadius(cornerMaxPx * (1f - p))
 
-                    drawRoundRect(color = surfaceColor, topLeft = Offset(bgX, 0f), size = Size(bgW, bgH), cornerRadius = cr)
+                    drawRoundRect(
+                        color        = surfaceColor.copy(alpha = cardAlpha),
+                        topLeft      = Offset(bgX, 0f),
+                        size         = Size(bgW, bgH),
+                        cornerRadius = cr
+                    )
 
                     if (p > 0.01f) {
                         val clipPath = androidx.compose.ui.graphics.Path().apply {
@@ -411,6 +413,8 @@ fun SharedPlayerContainer(
                 }
             }
 
+            // ✅ 迷你播放条：始终固定在底部，不随卡片移动
+            // 位置始终保持在屏幕底部正确位置
             if (isMiniVisible) {
                 Box(
                     modifier = Modifier
@@ -423,7 +427,7 @@ fun SharedPlayerContainer(
                             translationY = with(density) { 60.dp.toPx() } * sinkFrac
                         }
                 ) {
-                    MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod)
+                    MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod, hazeState = hazeState)
                 }
             }
         }
@@ -431,11 +435,14 @@ fun SharedPlayerContainer(
 }
 
 @Composable
-private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifier) {
+private fun MiniPlayer(
+    viewModel  : MusicViewModel,
+    gestureMod : Modifier = Modifier,
+    hazeState  : HazeState
+) {
     val song      by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.playerController.isPlaying.collectAsStateWithLifecycle()
     val s = song ?: return
-    val bgColor = Color.White.copy(alpha = 0.08f)
     val radius = MiniPlayerHeight / 2
     val isDark = isSystemInDarkTheme()
 
@@ -443,75 +450,89 @@ private fun MiniPlayer(viewModel: MusicViewModel, gestureMod: Modifier = Modifie
         modifier = Modifier
             .fillMaxWidth()
             .height(MiniPlayerHeight)
+            .shadow(
+                elevation    = 20.dp,
+                shape        = RoundedCornerShape(radius),
+                ambientColor = Color.Black.copy(alpha = if (isDark) 0.5f else 0.15f),
+                spotColor    = Color.Black.copy(alpha = if (isDark) 0.4f else 0.12f),
+                clip         = false
+            )
     ) {
+
+        // 层1：Haze 真实背景模糊 + 底色
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .graphicsLayer {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        renderEffect = android.graphics.RenderEffect
-                            .createBlurEffect(28f, 28f, android.graphics.Shader.TileMode.CLAMP)
-                            .asComposeRenderEffect()
-                    }
-                    clip  = true
-                    shape = RoundedCornerShape(radius)
-                }
-                .drawBehind {
-                    drawRoundRect(
-                        color        = bgColor,
-                        cornerRadius = CornerRadius(size.height / 2f)
-                    )
-                }
+                .clip(RoundedCornerShape(radius))
+                .hazeEffect(state = hazeState)
+                .background(
+                    if (isDark) Color.Black.copy(alpha = 0.75f)
+                    else Color.White.copy(alpha = 0.85f)
+                )
         )
+
+        // 层2：轻微顶部高光让卡片有立体感
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .drawBehind {
-                    val highlightAlpha = if (isDark) 0.18f else 0.35f
+                    val h  = size.height
+                    val cr = CornerRadius(h / 2f)
+                    // 顶部细边高光
                     drawRoundRect(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = highlightAlpha),
+                                Color.White.copy(alpha = if (isDark) 0.18f else 0.50f),
                                 Color.Transparent
                             ),
-                            startY = 0f, endY = size.height * 0.5f
+                            startY = 0f, endY = h * 0.4f
                         ),
-                        cornerRadius = CornerRadius(size.height / 2f)
-                    )
-                    drawRoundRect(
-                        color        = Color.White.copy(alpha = if (isDark) 0.12f else 0.25f),
-                        cornerRadius = CornerRadius(size.height / 2f),
-                        style        = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                        cornerRadius = cr,
+                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
                     )
                 }
         )
+
+        // 层3：内容
         Row(
-            modifier = Modifier
-                .fillMaxWidth().height(MiniPlayerHeight)
-                .padding(start = 9.dp, end = 4.dp),
+            modifier          = Modifier.fillMaxWidth().height(MiniPlayerHeight).padding(start = 9.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(modifier = gestureMod.weight(1f).height(MiniPlayerHeight), contentAlignment = Alignment.CenterStart) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(model = s.albumArtUri, contentDescription = null, contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(50.dp).graphicsLayer { clip = true; shape = RoundedCornerShape(13.dp) })
+                    AsyncImage(
+                        model              = s.albumArtUri,
+                        contentDescription = null,
+                        contentScale       = ContentScale.Crop,
+                        modifier           = Modifier.size(50.dp).graphicsLayer { clip = true; shape = RoundedCornerShape(13.dp) }
+                    )
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(s.title, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(s.artist, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            s.title,
+                            style    = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.SemiBold,
+                            ),
+                            color    = if (isDark) Color.White else Color.Black,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            s.artist,
+                            style    = MaterialTheme.typography.bodySmall,
+                            color    = if (isDark) Color.White.copy(alpha = 0.75f) else Color.Black.copy(alpha = 0.60f),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
             IconButton(onClick = { viewModel.playerController.skipToPrevious() }, Modifier.size(42.dp)) {
-                Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
+                Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(24.dp), tint = if (isDark) Color.White else Color.Black)
             }
             IconButton(onClick = { viewModel.playerController.togglePlayPause() }, Modifier.size(46.dp)) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.onSurface)
+                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(28.dp), tint = if (isDark) Color.White else Color.Black)
             }
             IconButton(onClick = { viewModel.playerController.skipToNext() }, Modifier.size(42.dp)) {
-                Icon(Icons.Rounded.SkipNext, null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurface)
+                Icon(Icons.Rounded.SkipNext, null, Modifier.size(24.dp), tint = if (isDark) Color.White else Color.Black)
             }
             Spacer(Modifier.width(2.dp))
         }
@@ -527,11 +548,11 @@ private fun FullPlayer(
     onCollapse  : () -> Unit,
     modifier    : Modifier = Modifier
 ) {
-    val controller = viewModel.playerController
-    val song       by controller.currentSong.collectAsStateWithLifecycle()
-    val isPlaying  by controller.isPlaying.collectAsStateWithLifecycle()
-    val repeatMode by controller.repeatMode.collectAsStateWithLifecycle()
-    val scope      = rememberCoroutineScope()
+    val controller    = viewModel.playerController
+    val song          by controller.currentSong.collectAsStateWithLifecycle()
+    val isPlaying     by controller.isPlaying.collectAsStateWithLifecycle()
+    val repeatMode    by controller.repeatMode.collectAsStateWithLifecycle()
+    val scope         = rememberCoroutineScope()
     val controllerRef by rememberUpdatedState(controller)
 
     var currentMs   by remember { mutableLongStateOf(0L) }
@@ -570,8 +591,7 @@ private fun FullPlayer(
     }
 
     Column(
-        modifier = modifier
-            .fillMaxSize()
+        modifier            = modifier.fillMaxSize()
             .graphicsLayer { translationY = -lyricsSlide.value.toFloat() }
             .systemBarsPadding(),
         horizontalAlignment = Alignment.Start
@@ -579,25 +599,23 @@ private fun FullPlayer(
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).then(fadeAlpha),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onCollapse, Modifier.size(48.dp)) {
-                Icon(Icons.Rounded.KeyboardArrowDown, "收起", Modifier.size(30.dp), tint = onBg.copy(alpha = 0.90f))
-            }
+                Icon(Icons.Rounded.KeyboardArrowDown, "收起", Modifier.size(30.dp), tint = onBg.copy(alpha = 0.90f)) }
             Text("N O W  P L A Y I N G",
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium, letterSpacing = 3.sp),
-                color = onBg.copy(alpha = 0.75f), modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                style    = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium, letterSpacing = 3.sp),
+                color    = onBg.copy(alpha = 0.75f),
+                modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
             IconButton(onClick = {}, Modifier.size(48.dp)) {
-                Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f))
-            }
+                Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f)) }
         }
 
         Box(Modifier.fillMaxWidth().weight(1f).padding(vertical = FullPagerPad), contentAlignment = Alignment.Center) {
             HorizontalPager(state = pagerState, Modifier.fillMaxSize()) { page ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     AsyncImage(
-                        model = controller.getSongAt(page)?.albumArtUri ?: song?.albumArtUri,
+                        model              = controller.getSongAt(page)?.albumArtUri ?: song?.albumArtUri,
                         contentDescription = null, contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxWidth(0.85f).aspectRatio(1f)
-                            .graphicsLayer { clip = true; shape = RoundedCornerShape(22.dp) }
-                    )
+                        modifier           = Modifier.fillMaxWidth(0.85f).aspectRatio(1f)
+                            .graphicsLayer { clip = true; shape = RoundedCornerShape(22.dp) })
                 }
             }
         }
@@ -615,10 +633,10 @@ private fun FullPlayer(
         Column(Modifier.padding(horizontal = 20.dp).then(fadeAlpha)) {
             val prog = if (isScrubbing) scrubProg else (currentMs.toFloat() / durationMs).coerceIn(0f, 1f)
             Slider(value = prog,
-                onValueChange = { isScrubbing = true; scrubProg = it; currentMs = (it * durationMs).toLong() },
+                onValueChange         = { isScrubbing = true; scrubProg = it; currentMs = (it * durationMs).toLong() },
                 onValueChangeFinished = { controllerRef.seekTo((scrubProg * durationMs).toLong()); isScrubbing = false },
                 modifier = Modifier.fillMaxWidth(),
-                colors = SliderDefaults.colors(thumbColor = onBg, activeTrackColor = onBg, inactiveTrackColor = onBg.copy(alpha = 0.20f)))
+                colors   = SliderDefaults.colors(thumbColor = onBg, activeTrackColor = onBg, inactiveTrackColor = onBg.copy(alpha = 0.20f)))
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
                 Text(formatMs(currentMs), style = MaterialTheme.typography.labelSmall, color = onBg.copy(alpha = 0.70f))
                 Text(formatMs(durationMs), style = MaterialTheme.typography.labelSmall, color = onBg.copy(alpha = 0.70f))
@@ -631,18 +649,14 @@ private fun FullPlayer(
             IconButton(onClick = { controller.toggleRepeat() }, Modifier.size(48.dp)) {
                 Icon(when (repeatMode) { Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne; else -> Icons.Rounded.Repeat },
                     null, Modifier.size(24.dp),
-                    tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else onBg.copy(alpha = 0.35f))
-            }
+                    tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else onBg.copy(alpha = 0.35f)) }
             IconButton(onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage - 1).coerceAtLeast(0)) } }, Modifier.size(56.dp)) {
-                Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(36.dp), tint = onBg)
-            }
+                Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(36.dp), tint = onBg) }
             FilledIconButton(onClick = { controller.togglePlayPause() }, Modifier.size(74.dp), shape = CircleShape,
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White)) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(36.dp), tint = Color(0xFF1A1A1A))
-            }
+                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(36.dp), tint = Color(0xFF1A1A1A)) }
             IconButton(onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)) } }, Modifier.size(56.dp)) {
-                Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp), tint = onBg)
-            }
+                Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp), tint = onBg) }
             Spacer(Modifier.size(48.dp))
         }
         Spacer(Modifier.height(32.dp))

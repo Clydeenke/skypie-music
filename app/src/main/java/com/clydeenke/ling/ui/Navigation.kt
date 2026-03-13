@@ -33,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clydeenke.ling.ui.components.SharedPlayerContainer
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import com.clydeenke.ling.ui.screen.folders.FolderScreen
 import com.clydeenke.ling.ui.screen.library.LibraryScreen
 import com.clydeenke.ling.ui.screen.search.OnlineSearchScreen
@@ -88,11 +90,14 @@ fun MainNavigation() {
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        val hazeState = rememberHazeState()
         Box(modifier = Modifier.fillMaxSize()) {
 
             AnimatedContent(
                 targetState    = Triple(showFolderScreen, showOnlineSearch, false),
-                modifier       = Modifier.fillMaxSize(),
+                modifier       = Modifier
+                    .fillMaxSize()
+                    .hazeSource(state = hazeState),
                 transitionSpec = {
                     val goingDeeper = targetState.first || targetState.second
                     if (goingDeeper) {
@@ -129,8 +134,10 @@ fun MainNavigation() {
                             val apiUrl = prefs.getString("api_url", "") ?: ""
                             OnlineSearchScreen(
                                 apiBaseUrl         = apiUrl,
+                                viewModel          = viewModel,
                                 onBack             = { showOnlineSearch = false },
-                                onDownloadComplete = { viewModel.refresh() }
+                                onDownloadComplete = { viewModel.refresh() },
+                                onOpenPlayer       = { viewModel.requestOpenPlayer() }
                             )
                         }
                         else -> HorizontalPager(
@@ -170,6 +177,7 @@ fun MainNavigation() {
                     viewModel           = viewModel,
                     openPlayerRequested = openPlayerEvent,
                     onOpenPlayerHandled = { viewModel.consumeOpenPlayer() },
+                    hazeState           = hazeState,
                     modifier            = Modifier.fillMaxSize()
                 )
             }

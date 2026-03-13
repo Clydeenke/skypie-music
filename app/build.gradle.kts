@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
-    alias(libs.plugins.ksp)
+    id("com.google.devtools.ksp") version "2.3.0"
 }
 
 kotlin {
@@ -26,8 +26,8 @@ android {
         applicationId = "com.clydeenke.ling"
         minSdk = 26
         targetSdk = 36  // 更新到最新稳定版
-        versionCode = 1
-        versionName = "1.0.0-beta01"
+        versionCode = 2
+        versionName = "1.1.00"
     }
 
     buildTypes {
@@ -44,7 +44,11 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
         isCoreLibraryDesugaringEnabled = true  // 启用核心库脱糖，支持新API
     }
-    kotlinOptions { jvmTarget = "21" }  // 升级到Java 21
+    kotlin {
+        compilerOptions {
+            jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+        }
+    }
     buildFeatures { compose = true }
 
     // ✅ 打包时排除 JAudioTagger 带的多余文件，避免冲突
@@ -69,7 +73,7 @@ dependencies {
     implementation(libs.androidx.splashscreen)
     implementation(libs.androidx.documentfile)
     implementation("androidx.activity:activity-compose:1.8.0")
-
+    implementation("dev.chrisbanes.haze:haze-materials:1.5.1")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.ui.graphics)
@@ -78,6 +82,8 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.animation)
+    implementation("io.github.fletchmckee.liquid:liquid:1.1.1")
+    implementation(libs.compose.cloudy)
 
     // 注释掉暂时不用的accompanist依赖
     // implementation(libs.accompanist.systemuicontroller)
@@ -102,4 +108,6 @@ dependencies {
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
 }
