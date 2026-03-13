@@ -110,4 +110,5 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling.preview)
     implementation(libs.haze)
     implementation(libs.haze.materials)
+    implementation("androidx.compose.ui:ui-text-google-fonts")
 }

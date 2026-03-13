@@ -100,7 +100,8 @@ class PlayerController @Inject constructor(
 
     fun playQueue(songs: List<Song>, startIndex: Int = 0) {
         if (songs.isEmpty()) return
-        _isOnlineMode.value = false
+        _isOnlineMode.value  = false
+        _currentStreamUrl    = null
         currentQueue = songs
         currentIndex = startIndex.coerceIn(0, songs.lastIndex)
         val items = songs.map { it.toMediaItem() }
@@ -131,6 +132,9 @@ class PlayerController @Inject constructor(
      * 在线流媒体播放：直接给一个 HTTP URL，不需要下载
      * ExoPlayer / Media3 原生支持 HTTP 音频流
      */
+    private var _currentStreamUrl: String? = null
+    fun getCurrentStreamUrl(): String? = _currentStreamUrl
+
     fun playOnlineStream(
         streamUrl : String,
         title     : String,
@@ -141,6 +145,7 @@ class PlayerController @Inject constructor(
     ) {
         _isOnlineMode.value  = true
         _onlineLrcText.value = lrcText
+        _currentStreamUrl    = streamUrl
 
         val metadata = MediaMetadata.Builder()
             .setTitle(title)
