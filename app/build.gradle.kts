@@ -26,8 +26,8 @@ android {
         applicationId = "com.clydeenke.ling"
         minSdk = 26
         targetSdk = 36  // 更新到最新稳定版
-        versionCode = 2
-        versionName = "1.1.00"
+        versionCode = 4
+        versionName = "1.2.5"
     }
 
     buildTypes {
