@@ -150,7 +150,8 @@ fun MainNavigation() {
                                     onSongClick        = { songs, index -> viewModel.playSong(songs, index) },
                                     onOpenPlayer       = { viewModel.requestOpenPlayer() },
                                     onOpenOnlineSearch = { showOnlineSearch = true },
-                                    onRefresh          = { viewModel.refresh() }
+                                    onRefresh          = { viewModel.refresh() },
+                                    hazeState          = hazeState,
                                 )
                                 1 -> SettingsScreen(
                                     viewModel     = viewModel,

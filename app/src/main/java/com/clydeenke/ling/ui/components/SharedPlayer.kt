@@ -90,6 +90,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import androidx.activity.compose.PredictiveBackHandler
 import kotlinx.coroutines.CancellationException
+import androidx.compose.foundation.border
+
+private val AppleEasing = CubicBezierEasing(0.32f, 0.94f, 0.60f, 1.0f)
 
 internal val MiniPlayerHeight = 68.dp
 private  val MiniBottomPad    = 24.dp
@@ -461,31 +464,47 @@ fun SharedPlayerContainer(
 }
 
 @Composable
-private fun MiniPlayer(
-    viewModel  : MusicViewModel,
-    gestureMod : Modifier = Modifier,
-    hazeState  : HazeState
+fun MiniPlayer(
+    viewModel: MusicViewModel,
+    gestureMod: Modifier = Modifier,
+    hazeState: HazeState
 ) {
-    val song      by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
+    val song by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     val isPlaying by viewModel.playerController.isPlaying.collectAsStateWithLifecycle()
     val s = song ?: return
     val radius = MiniPlayerHeight / 2
     val isDark = isSystemInDarkTheme()
 
+    // 🌟 核心修复：解决 accentColor 报错
+    // 这里我们先设定：如果有颜色就用颜色，没有就用主题色
+    // 以后你可以学习如何用 Palette 库把这个颜色存进 s.accentColor
+    val targetColor = MaterialTheme.colorScheme.primaryContainer
+
+    val dominantColor by animateColorAsState(
+        targetValue = targetColor,
+        animationSpec = tween(800, 0, AppleEasing),
+        label = "ColorTransition"
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(MiniPlayerHeight)
+            // 1. 外部大阴影：给它一个柔和的扩散感
             .shadow(
-                elevation    = 20.dp,
-                shape        = RoundedCornerShape(radius),
-                ambientColor = Color.Black.copy(alpha = if (isDark) 0.5f else 0.15f),
-                spotColor    = Color.Black.copy(alpha = if (isDark) 0.4f else 0.12f),
-                clip         = false
+                elevation = 12.dp,
+                shape = RoundedCornerShape(radius),
+                spotColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.15f),
+                ambientColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.1f)
+            )
+            // 2. 这里的 border 就是解决“白色融合”的关键
+            .border(
+                width = 0.8.dp,
+                color = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.05f),
+                shape = RoundedCornerShape(radius)
             )
     ) {
-
-        // 层1：Haze 真实背景模糊 + 底色
+        // 内部的 HazeEffect 和内容保持不变...
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -493,33 +512,33 @@ private fun MiniPlayer(
                 .hazeEffect(
                     state = hazeState,
                     style = dev.chrisbanes.haze.HazeStyle(
-                        blurRadius  = 0.dp,
-                        noiseFactor = 0.08f,
-                        tints       = listOf(
+                        blurRadius = 12.dp,
+                        noiseFactor = 0.02f, // 稍微降低噪点，让它更通透
+                        tints = listOf(
+                            // 亮色模式下稍微压深一点点，暗色模式保持原样
                             dev.chrisbanes.haze.HazeTint(
-                                color = if (isDark) Color.Black.copy(alpha = 0.55f)
-                                else Color.White.copy(alpha = 0.65f)
+                                color = if (isDark) Color.Transparent
+                                else Color.Black.copy(alpha = 0.02f)
                             )
                         )
                     )
                 )
         )
 
-        // 层2：轻微顶部高光让卡片有立体感
+        // 层2：顶部微光描边
         Box(
             modifier = Modifier
                 .matchParentSize()
                 .drawBehind {
-                    val h  = size.height
+                    val h = size.height
                     val cr = CornerRadius(h / 2f)
-                    // 顶部细边高光
                     drawRoundRect(
                         brush = Brush.verticalGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = if (isDark) 0.18f else 0.50f),
+                                Color.White.copy(alpha = if (isDark) 0.15f else 0.45f),
                                 Color.Transparent
                             ),
-                            startY = 0f, endY = h * 0.4f
+                            startY = 0f, endY = h * 0.5f
                         ),
                         cornerRadius = cr,
                         style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
@@ -529,46 +548,76 @@ private fun MiniPlayer(
 
         // 层3：内容
         Row(
-            modifier          = Modifier.fillMaxWidth().height(MiniPlayerHeight).padding(start = 9.dp, end = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MiniPlayerHeight)
+                .padding(start = 10.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = gestureMod.weight(1f).height(MiniPlayerHeight), contentAlignment = Alignment.CenterStart) {
+            Box(
+                modifier = gestureMod.weight(1f).height(MiniPlayerHeight),
+                contentAlignment = Alignment.CenterStart
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    // 封面：48dp，带小阴影
                     AsyncImage(
-                        model              = s.albumArtUri,
+                        model = s.albumArtUri,
                         contentDescription = null,
-                        contentScale       = ContentScale.Crop,
-                        modifier           = Modifier.size(50.dp).graphicsLayer { clip = true; shape = RoundedCornerShape(13.dp) }
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .shadow(2.dp, RoundedCornerShape(10.dp))
                     )
-                    Spacer(Modifier.width(10.dp))
+
+                    Spacer(Modifier.width(12.dp))
+
                     Column(Modifier.weight(1f)) {
                         Text(
-                            s.title,
-                            style    = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.SemiBold,
+                            text = s.title,
+                            style = MaterialTheme.typography.titleSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
                             ),
-                            color    = if (isDark) Color.White else Color.Black,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                            color = if (isDark) Color.White else Color.Black,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            s.artist,
-                            style    = MaterialTheme.typography.bodySmall,
-                            color    = if (isDark) Color.White.copy(alpha = 0.75f) else Color.Black.copy(alpha = 0.60f),
-                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                            text = s.artist,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isDark) Color.White.copy(0.6f) else Color.Black.copy(0.5f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
-            IconButton(onClick = { viewModel.playerController.skipToPrevious() }, Modifier.size(42.dp)) {
-                Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(24.dp), tint = if (isDark) Color.White else Color.Black)
+
+            // 控制按键
+            val iconTint = if (isDark) Color.White else Color.Black
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { viewModel.playerController.skipToPrevious() }, Modifier.size(40.dp)) {
+                    Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(22.dp), tint = iconTint)
+                }
+
+                IconButton(
+                    onClick = { viewModel.playerController.togglePlayPause() },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(30.dp),
+                        tint = iconTint
+                    )
+                }
+
+                IconButton(onClick = { viewModel.playerController.skipToNext() }, Modifier.size(40.dp)) {
+                    Icon(Icons.Rounded.SkipNext, null, Modifier.size(22.dp), tint = iconTint)
+                }
             }
-            IconButton(onClick = { viewModel.playerController.togglePlayPause() }, Modifier.size(46.dp)) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(28.dp), tint = if (isDark) Color.White else Color.Black)
-            }
-            IconButton(onClick = { viewModel.playerController.skipToNext() }, Modifier.size(42.dp)) {
-                Icon(Icons.Rounded.SkipNext, null, Modifier.size(24.dp), tint = if (isDark) Color.White else Color.Black)
-            }
-            Spacer(Modifier.width(2.dp))
         }
     }
 }

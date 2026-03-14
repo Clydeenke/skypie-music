@@ -212,7 +212,11 @@ fun OnlineSearchScreen(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+    ) {
         // ── 顶部栏 ────────────────────────────────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth().statusBarsPadding()
