@@ -4,7 +4,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable // 🌟 找回长按必须的导包
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,7 +44,7 @@ import kotlin.math.roundToInt
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 
 // 🍎 苹果级缓动：先快后慢，带一点点回弹阻尼感
 private val AppleEasing = CubicBezierEasing(0.32f, 0.94f, 0.60f, 1.0f)
@@ -66,8 +66,8 @@ fun LibraryScreen(
 
     var isSearchExpanded by remember { mutableStateOf(false) }
 
-    // 🌟 核心改动：把那些花里胡哨的 LaunchedEffect 和 listVisible 统统删掉！
-    // 现在不需要人工去干预列表刷新了，底层自动搞定。
+    // 🌟 核心删除提示框状态
+    var songToDelete by remember { mutableStateOf<Song?>(null) }
 
     Column(
         modifier = Modifier
@@ -78,15 +78,14 @@ fun LibraryScreen(
         // --- 头部设计 (Header) ---
         Box(
             modifier = Modifier
-                .zIndex(1f) // 保证在最顶层
-                .background(MaterialTheme.colorScheme.surface) // 🌟 重点 1：涂上底色，遮住后面钻出来的歌曲
-                .clip(androidx.compose.ui.graphics.RectangleShape) // 🌟 重点 2：替代 clipToBounds，强行切断超出边界的内容
+                .zIndex(1f)
+                .background(MaterialTheme.colorScheme.surface)
+                .clip(RectangleShape)
                 .statusBarsPadding()
                 .fillMaxWidth()
                 .height(72.dp)
                 .padding(horizontal = 24.dp)
         ) {
-            // 【底层】标题与云图标：搜索展开时渐隐
             Row(
                 modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically
@@ -107,7 +106,6 @@ fun LibraryScreen(
                     )
                 }
 
-                // 云图标：固定宽度容器防止抖动
                 Box(modifier = Modifier.width(48.dp), contentAlignment = Alignment.Center) {
                     androidx.compose.animation.AnimatedVisibility(
                         visible = !isSearchExpanded,
@@ -120,13 +118,11 @@ fun LibraryScreen(
                     }
                 }
 
-                // 给搜索图标留位
                 if (!isSearchExpanded) {
                     Spacer(Modifier.width(48.dp))
                 }
             }
 
-            // 【顶层】搜索框：点击后执行一镜到底的横向滑动
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.CenterEnd
@@ -151,8 +147,6 @@ fun LibraryScreen(
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 itemsIndexed(songs, key = { _, s -> s.id }) { index, song ->
-                    // 🌟 删除了 AnimatedVisibility 的暴力重绘，只留下 Modifier.animateItem()
-                    // 这样在搜索或者删除歌曲时，剩下的歌曲会像苹果一样“丝滑地滑到新位置”，绝不闪烁！
                     Box(modifier = Modifier.animateItem()) {
                         SongListItem(
                             song = song,
@@ -160,12 +154,38 @@ fun LibraryScreen(
                             onClick = {
                                 if (currentSong?.id == song.id) onOpenPlayer()
                                 else onSongClick(songs, index)
-                            }
+                            },
+                            onLongClick = { songToDelete = song } // 🌟 重新接回长按逻辑
                         )
                     }
                 }
             }
         }
+    }
+
+
+    if (songToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { songToDelete = null },
+            title = { Text("删除歌曲") },
+            text = { Text("确定要从本地库中移除 \"${songToDelete?.title}\" 吗？") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        songToDelete?.let { viewModel.deleteSong(it) }
+                        songToDelete = null
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("删除")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { songToDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
@@ -178,28 +198,24 @@ fun IntegratedSearchBar(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
 
-    // 🌟 1. 宽度动画：控制整体容器的伸缩感
     val widthPercent by animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0.12f,
         animationSpec = tween(600, 0, AppleEasing),
         label = "searchWidth"
     )
 
-    // 内容透明度（文字和关闭按钮）
     val contentAlpha by animateFloatAsState(
         targetValue = if (isExpanded) 1f else 0f,
         animationSpec = tween(400, if (isExpanded) 200 else 0, AppleEasing),
         label = "contentAlpha"
     )
 
-    // 最外层容器：强制靠右
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp),
         contentAlignment = Alignment.CenterEnd
     ) {
-        // 伸缩的背景底座
         Box(
             modifier = Modifier
                 .fillMaxWidth(widthPercent)
@@ -214,24 +230,21 @@ fun IntegratedSearchBar(
                 }
         )
 
-        // 🌟 核心布局：Row 的宽度跟随底座同步伸缩
         Row(
             modifier = Modifier
-                .fillMaxWidth(widthPercent) // Row 的宽度也动态伸缩
+                .fillMaxWidth(widthPercent)
                 .fillMaxHeight()
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start
         ) {
-            // 🔍 原生搜索图标：固定 size，没有任何 scale 动画
             Icon(
                 imageVector = Icons.Rounded.Search,
                 contentDescription = null,
-                modifier = Modifier.requiredSize(24.dp), // 锁死 24dp，不让布局引擎挤压它
+                modifier = Modifier.requiredSize(24.dp),
                 tint = if (isExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
             )
 
-            // 输入区域：只在框子足够长的时候显示
             if (widthPercent > 0.4f) {
                 Spacer(Modifier.width(8.dp))
                 BasicTextField(
@@ -253,7 +266,6 @@ fun IntegratedSearchBar(
                     }
                 )
 
-                // 关闭按钮：也只做淡入淡出，不做缩放
                 if (isExpanded) {
                     IconButton(
                         onClick = { if (query.isNotEmpty()) onQueryChange("") else onToggle(false) },
@@ -267,11 +279,13 @@ fun IntegratedSearchBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SongListItem(
     song: Song,
     isCurrentlyPlaying: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit // 🌟 参数找回
 ) {
     val scale by animateFloatAsState(
         targetValue = if (isCurrentlyPlaying) 1.03f else 1f,
@@ -295,7 +309,10 @@ private fun SongListItem(
                 if (isCurrentlyPlaying) MaterialTheme.colorScheme.primaryContainer.copy(0.45f)
                 else Color.Transparent
             )
-            .clickable(onClick = onClick)
+            .combinedClickable( // 🌟 核心逻辑找回：支持点击和长按
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -303,7 +320,7 @@ private fun SongListItem(
                 model = song.albumArtUri,
                 contentDescription = null,
                 modifier = Modifier
-                    .size(48.dp) // 回归 48dp，与播放条更统一
+                    .size(48.dp)
                     .clip(RoundedCornerShape(10.dp)),
                 contentScale = ContentScale.Crop,
                 placeholder = rememberVectorPainter(Icons.Rounded.MusicNote)
@@ -337,7 +354,6 @@ private fun SongListItem(
     }
 }
 
-// 保留此函数，确保以后扩展功能时能直接调用
 private fun formatDuration(ms: Long): String {
     val s = ms / 1000
     return "${s / 60}:${(s % 60).toString().padStart(2, '0')}"

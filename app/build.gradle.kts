@@ -27,7 +27,7 @@ android {
         minSdk = 26
         targetSdk = 36  // 更新到最新稳定版
         versionCode = 4
-        versionName = "1.2.5"
+        versionName = "1.2.6"
     }
 
     buildTypes {
