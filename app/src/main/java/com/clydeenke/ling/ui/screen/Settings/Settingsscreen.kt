@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clydeenke.ling.viewmodel.MusicViewModel
+import androidx.compose.runtime.Composable
 
 private const val PREFS_NAME  = "ling_settings"
 private const val KEY_API_URL = "api_url"

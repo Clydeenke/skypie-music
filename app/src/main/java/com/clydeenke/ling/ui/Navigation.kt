@@ -15,8 +15,6 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -36,7 +34,6 @@ import com.clydeenke.ling.ui.components.SharedPlayerContainer
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import com.clydeenke.ling.ui.screen.folders.FolderScreen
-import com.clydeenke.ling.ui.screen.library.LibraryScreen
 import com.clydeenke.ling.ui.screen.search.OnlineSearchScreen
 import com.clydeenke.ling.ui.screen.settings.SettingsScreen
 import com.clydeenke.ling.viewmodel.MusicViewModel
@@ -44,16 +41,22 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import com.clydeenke.ling.ui.screen.library.LibraryScreen
+
+// 🌟 新增：用一个干净的数据类管理页面状态，彻底抛弃旧的 Pager
+private data class NavState(val folder: Boolean, val online: Boolean, val settings: Boolean) {
+    val isSubPage: Boolean get() = folder || online || settings
+}
 
 @Composable
 fun MainNavigation() {
     val viewModel   : MusicViewModel = hiltViewModel()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
-    val pagerState   = rememberPagerState(pageCount = { 2 })
     val context      = LocalContext.current
 
     var showFolderScreen by remember { mutableStateOf(false) }
     var showOnlineSearch by remember { mutableStateOf(false) }
+    var showSettingsScreen by remember { mutableStateOf(false) } // 🌟 新增：控制设置界面的状态
 
     // 预见式返回的手势进度（0=没在划，1=完全划过去了）
     var backProgress by remember { mutableFloatStateOf(0f) }
@@ -61,16 +64,22 @@ fun MainNavigation() {
     val scope           = rememberCoroutineScope()
     val openPlayerEvent by viewModel.openPlayerEvent.collectAsStateWithLifecycle()
 
-    // ✅ 预见式返回：文件夹/云端搜索 → 返回主页，手指跟随有动画
-    PredictiveBackHandler(enabled = showFolderScreen || showOnlineSearch) { progress ->
+    // ✅ 预见式返回：文件夹/云端搜索/设置 → 返回主页，手指跟随有动画
+    PredictiveBackHandler(enabled = showFolderScreen || showOnlineSearch || showSettingsScreen) { progress ->
         try {
             progress.collect { event ->
                 // 让页面跟着手指往右移动，产生"快要返回"的视觉预览
                 backProgress = event.progress
             }
-            // 手松开确认返回：先切页面，等动画结束再重置进度，避免闪回
-            showFolderScreen = false
-            showOnlineSearch = false
+            // 手松开确认返回：精确判断当前在那一层，逐层关闭
+            if (showFolderScreen) {
+                showFolderScreen = false
+            } else if (showOnlineSearch) {
+                showOnlineSearch = false
+            } else {
+                showSettingsScreen = false
+            }
+
             scope.launch {
                 delay(250)
                 backProgress = 0f
@@ -94,12 +103,12 @@ fun MainNavigation() {
         Box(modifier = Modifier.fillMaxSize()) {
 
             AnimatedContent(
-                targetState    = Triple(showFolderScreen, showOnlineSearch, false),
+                targetState    = NavState(showFolderScreen, showOnlineSearch, showSettingsScreen),
                 modifier       = Modifier
                     .fillMaxSize()
                     .hazeSource(state = hazeState),
                 transitionSpec = {
-                    val goingDeeper = targetState.first || targetState.second
+                    val goingDeeper = targetState.isSubPage
                     if (goingDeeper) {
                         slideInHorizontally { it } + fadeIn(tween(220)) togetherWith
                                 slideOutHorizontally { -it / 4 } + fadeOut(tween(180))
@@ -109,14 +118,13 @@ fun MainNavigation() {
                     }
                 },
                 label = "mainNav"
-            ) { (inFolder, inOnline, _) ->
-                val isSubPage = inFolder || inOnline
+            ) { state ->
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
                             // 手指往里划时，子页面跟着往右移+缩小，像系统原生返回动画
-                            if (isSubPage && backProgress > 0f) {
+                            if (state.isSubPage && backProgress > 0f) {
                                 translationX = size.width * backProgress * 0.35f
                                 scaleX = 1f - backProgress * 0.06f
                                 scaleY = 1f - backProgress * 0.06f
@@ -125,11 +133,11 @@ fun MainNavigation() {
                         }
                 ) {
                     when {
-                        inFolder -> FolderScreen(
+                        state.folder -> FolderScreen(
                             viewModel = viewModel,
                             onBack    = { showFolderScreen = false }
                         )
-                        inOnline -> {
+                        state.online -> {
                             val prefs  = context.getSharedPreferences("ling_settings", 0)
                             val apiUrl = prefs.getString("api_url", "") ?: ""
                             OnlineSearchScreen(
@@ -140,24 +148,24 @@ fun MainNavigation() {
                                 onOpenPlayer       = { viewModel.requestOpenPlayer() }
                             )
                         }
-                        else -> HorizontalPager(
-                            state    = pagerState,
-                            modifier = Modifier.fillMaxSize()
-                        ) { page ->
-                            when (page) {
-                                0 -> LibraryScreen(
-                                    viewModel          = viewModel,
-                                    onSongClick        = { songs, index -> viewModel.playSong(songs, index) },
-                                    onOpenPlayer       = { viewModel.requestOpenPlayer() },
-                                    onOpenOnlineSearch = { showOnlineSearch = true },
-                                    onRefresh          = { viewModel.refresh() },
-                                    hazeState          = hazeState,
-                                )
-                                1 -> SettingsScreen(
-                                    viewModel     = viewModel,
-                                    onOpenFolders = { showFolderScreen = true }
-                                )
-                            }
+                        state.settings -> {
+                            // 🌟 设置界面现在作为一个独立的子层级弹出，不再跟侧边栏滑动冲突
+                            SettingsScreen(
+                                viewModel     = viewModel,
+                                onOpenFolders = { showFolderScreen = true }
+                            )
+                        }
+                        else -> {
+                            // 🌟 剥离了 HorizontalPager，LibraryScreen 现在是绝对的底层主页
+                            LibraryScreen(
+                                viewModel          = viewModel,
+                                onSongClick        = { songs, index -> viewModel.playSong(songs, index) },
+                                onOpenPlayer       = { viewModel.requestOpenPlayer() },
+                                onOpenOnlineSearch = { showOnlineSearch = true },
+                                onNavigateToSettings = { showSettingsScreen = true }, // 连接到我们刚写的侧滑抽屉
+                                onRefresh          = { viewModel.refresh() },
+                                hazeState          = hazeState,
+                            )
                         }
                     }
                 }

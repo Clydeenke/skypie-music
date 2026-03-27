@@ -26,8 +26,8 @@ android {
         applicationId = "com.clydeenke.ling"
         minSdk = 26
         targetSdk = 36  // 更新到最新稳定版
-        versionCode = 4
-        versionName = "1.2.6"
+        versionCode = 5
+        versionName = "1.3.0-alpha"
     }
 
     buildTypes {
@@ -111,4 +111,5 @@ dependencies {
     implementation(libs.haze)
     implementation(libs.haze.materials)
     implementation("androidx.compose.ui:ui-text-google-fonts")
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 }
