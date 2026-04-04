@@ -6,6 +6,8 @@ import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.clydeenke.ling.data.repository.MusicRepository
+import com.clydeenke.ling.data.repository.PlaylistRepository
+import com.clydeenke.ling.domain.model.Playlist
 import com.clydeenke.ling.domain.model.ScanFolder
 import com.clydeenke.ling.domain.model.ScanLog
 import com.clydeenke.ling.domain.model.Song
@@ -23,12 +25,23 @@ private const val PREFS_PLAYER  = "ling_player"
 private const val KEY_LAST_SONG = "last_song_id"
 private const val KEY_LAST_POS  = "last_position_ms"
 
+private const val KEY_TOTAL_LISTENED_MS = "total_listened_ms"
+
+/** 歌曲列表排序方式 */
+enum class SortOrder {
+    TITLE,       // 按标题 A→Z
+    ARTIST,      // 按艺术家 A→Z
+    DURATION,    // 按时长 长→短
+    DATE_ADDED   // 按添加时间 新→旧（默认）
+}
+
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class MusicViewModel @Inject constructor(
-    application            : Application,
-    private val repository : MusicRepository,
-    val playerController   : PlayerController
+    application                  : Application,
+    private val repository       : MusicRepository,
+    private val playlistRepository: PlaylistRepository,  // 歌单仓库
+    val playerController         : PlayerController
 ) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_PLAYER, 0)
@@ -40,16 +53,39 @@ class MusicViewModel @Inject constructor(
     fun requestOpenPlayer() { _openPlayerEvent.value = true  }
     fun consumeOpenPlayer() { _openPlayerEvent.value = false }
 
+    // ── 累计听歌时长（毫秒，持久化到 SharedPreferences） ─────────────────────────
+    private val _totalListenedMs = MutableStateFlow(prefs.getLong(KEY_TOTAL_LISTENED_MS, 0L))
+    val totalListenedMs: StateFlow<Long> = _totalListenedMs.asStateFlow()
+
+    // ── 多选模式状态（供 SharedPlayerContainer 隐藏迷你播放条） ──────────────────
+    private val _isMultiSelectActive = MutableStateFlow(false)
+    val isMultiSelectActive: StateFlow<Boolean> = _isMultiSelectActive.asStateFlow()
+    fun setMultiSelectActive(active: Boolean) { _isMultiSelectActive.value = active }
+
     // ── 搜索状态 ──────────────────────────────────────────────────────────────
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // ── 歌曲列表 ──────────────────────────────────────────────────────────────
-    val songs: StateFlow<List<Song>> = _searchQuery
-        .debounce(300)
-        .flatMapLatest { q ->
-            if (q.isBlank()) repository.getAllSongs()
-            else             repository.searchSongs(q)
+    // ── 排序状态 ──────────────────────────────────────────────────────────────
+    private val _sortOrder = MutableStateFlow(SortOrder.DATE_ADDED)
+    val sortOrder: StateFlow<SortOrder> = _sortOrder.asStateFlow()
+    fun setSortOrder(order: SortOrder) { _sortOrder.value = order }
+
+    // ── 歌曲列表（支持搜索 + 排序，二者任一变化都触发重组） ──────────────────
+    val songs: StateFlow<List<Song>> = combine(
+        _searchQuery.debounce(300),
+        _sortOrder
+    ) { q, sort -> q to sort }
+        .flatMapLatest { (q, sort) ->
+            val base = if (q.isBlank()) repository.getAllSongs() else repository.searchSongs(q)
+            base.map { list ->
+                when (sort) {
+                    SortOrder.TITLE      -> list.sortedBy      { it.title.lowercase()  }
+                    SortOrder.ARTIST     -> list.sortedBy      { it.artist.lowercase() }
+                    SortOrder.DURATION   -> list.sortedByDescending { it.duration      }
+                    SortOrder.DATE_ADDED -> list.sortedByDescending { it.dateAdded     }
+                }
+            }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -61,12 +97,15 @@ class MusicViewModel @Inject constructor(
     val isScanning : StateFlow<Boolean>       = repository.isScanning
     val scanLogs   : StateFlow<List<ScanLog>> = repository.scanLogs
 
-    // ── 无效文件列表（供 UI 展示确认） ────────────────────────────────────────
-    private val _invalidFiles = MutableStateFlow<List<java.io.File>>(emptyList())
-    val invalidFiles: StateFlow<List<java.io.File>> = _invalidFiles.asStateFlow()
-
+    // ── 无效文件 ──────────────────────────────────────────────────────────────
+    private val _invalidFiles    = MutableStateFlow<List<java.io.File>>(emptyList())
     private val _isCheckingFiles = MutableStateFlow(false)
-    val isCheckingFiles: StateFlow<Boolean> = _isCheckingFiles.asStateFlow()
+    val invalidFiles    : StateFlow<List<java.io.File>> = _invalidFiles.asStateFlow()
+    val isCheckingFiles : StateFlow<Boolean>            = _isCheckingFiles.asStateFlow()
+
+    // ── 歌单列表（响应式，歌单增删改时自动刷新） ─────────────────────────────
+    val playlists: StateFlow<List<Playlist>> = playlistRepository.getAllPlaylists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     // ── 启动时恢复上次播放 ────────────────────────────────────────────────────
     init {
@@ -100,41 +139,62 @@ class MusicViewModel @Inject constructor(
         playerController.playQueue(songs, index)
         prefs.edit()
             .putLong(KEY_LAST_SONG, songs[index].id)
-            .putLong(KEY_LAST_POS, 0L)
+            .putLong(KEY_LAST_POS,  0L)
             .apply()
+    }
+
+    /** 将歌曲插入到当前播放的紧下一首 */
+    fun playNext(song: Song) {
+        playerController.playNext(song)
     }
 
     fun savePlaybackProgress() {
         val song = playerController.currentSong.value ?: return
         val pos  = playerController.getCurrentPosition()
+        // 仅在实际播放时累积时长（每 5 秒调用一次，加 5 秒）
+        val addMs    = if (playerController.isPlaying.value) 5_000L else 0L
+        val newTotal = _totalListenedMs.value + addMs
+        _totalListenedMs.value = newTotal
         prefs.edit()
             .putLong(KEY_LAST_SONG, song.id)
-            .putLong(KEY_LAST_POS, pos)
+            .putLong(KEY_LAST_POS,  pos)
+            .putLong(KEY_TOTAL_LISTENED_MS, newTotal)
             .apply()
     }
 
-    // ── 删除歌曲（从数据库 + 删文件 + 同名封面/歌词） ────────────────────────
+    // ── 歌单操作 ──────────────────────────────────────────────────────────────
+
+    /** 获取单个歌单详情，供详情页订阅（Flow，随数据库变化实时更新） */
+    fun getPlaylistDetail(playlistId: Long): Flow<Playlist?> =
+        playlistRepository.getPlaylistDetail(playlistId)
+
+    fun createPlaylist(name: String) {
+        viewModelScope.launch { playlistRepository.createPlaylist(name.trim()) }
+    }
+
+    fun deletePlaylist(playlistId: Long) {
+        viewModelScope.launch { playlistRepository.deletePlaylist(playlistId) }
+    }
+
+    fun addSongToPlaylist(playlistId: Long, songId: Long) {
+        viewModelScope.launch { playlistRepository.addSongToPlaylist(playlistId, songId) }
+    }
+
+    fun removeSongFromPlaylist(playlistId: Long, songId: Long) {
+        viewModelScope.launch { playlistRepository.removeSongFromPlaylist(playlistId, songId) }
+    }
+
+    // ── 删除歌曲 ──────────────────────────────────────────────────────────────
     fun deleteSong(song: Song) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // 删音频文件
                 val audioFile = java.io.File(song.filePath)
                 if (audioFile.exists()) audioFile.delete()
-
-                // 删同名 .jpg 封面
-                val jpg = java.io.File(song.filePath.substringBeforeLast(".") + ".jpg")
-                if (jpg.exists()) jpg.delete()
-
-                // 删同名 .lrc 歌词
-                val lrc = java.io.File(song.filePath.substringBeforeLast(".") + ".lrc")
-                if (lrc.exists()) lrc.delete()
-
-                // 通知 MediaStore 更新
-                android.media.MediaScannerConnection.scanFile(
-                    app, arrayOf(song.filePath), null, null
-                )
-
-                // 从数据库删除
+                val base = song.filePath.substringBeforeLast(".")
+                java.io.File("$base.jpg").takeIf { it.exists() }?.delete()
+                java.io.File("$base.lrc").takeIf { it.exists() }?.delete()
+                java.io.File("$base.krc").takeIf { it.exists() }?.delete()
+                android.media.MediaScannerConnection.scanFile(app, arrayOf(song.filePath), null, null)
                 repository.deleteSong(song)
             } catch (e: Exception) {
                 android.util.Log.e("ViewModel", "删除失败: ${e.message}")
@@ -142,14 +202,14 @@ class MusicViewModel @Inject constructor(
         }
     }
 
-    // ── 扫描无效文件（播放时长为0或文件损坏） ────────────────────────────────
+    // ── 扫描无效文件 ──────────────────────────────────────────────────────────
     fun scanInvalidFiles() {
         viewModelScope.launch {
             _isCheckingFiles.value = true
             val invalid = withContext(Dispatchers.IO) {
-                val musicDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
+                val musicDir  = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
                 val audioExts = setOf("mp3", "flac", "aac", "ogg", "m4a", "wav")
-                val result = mutableListOf<java.io.File>()
+                val result    = mutableListOf<java.io.File>()
                 musicDir.walkTopDown()
                     .filter { it.isFile && it.extension.lowercase() in audioExts }
                     .forEach { file ->
@@ -158,26 +218,24 @@ class MusicViewModel @Inject constructor(
                             mmr.setDataSource(file.absolutePath)
                             val dur = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                                 ?.toLongOrNull() ?: 0L
-                            if (dur < 1000) result.add(file) // 时长不足1秒判定为无效
+                            if (dur < 1000) result.add(file)
                         } catch (_: Exception) {
-                            result.add(file) // 读取失败也是无效
+                            result.add(file)
                         } finally {
                             mmr.release()
                         }
                     }
                 result
             }
-            _invalidFiles.value = invalid
+            _invalidFiles.value    = invalid
             _isCheckingFiles.value = false
         }
     }
 
-    // ── 删除所有无效文件 ──────────────────────────────────────────────────────
     fun deleteInvalidFiles() {
         viewModelScope.launch(Dispatchers.IO) {
             _invalidFiles.value.forEach { file ->
                 file.delete()
-                // 删同名封面和歌词
                 java.io.File(file.absolutePath.substringBeforeLast(".") + ".jpg").delete()
                 java.io.File(file.absolutePath.substringBeforeLast(".") + ".lrc").delete()
                 android.media.MediaScannerConnection.scanFile(
@@ -189,7 +247,6 @@ class MusicViewModel @Inject constructor(
         }
     }
 
-    // ── 清理 App 私有目录旧文件（之前版本遗留的） ────────────────────────────
     fun cleanOldPrivateFiles() {
         viewModelScope.launch(Dispatchers.IO) {
             try {

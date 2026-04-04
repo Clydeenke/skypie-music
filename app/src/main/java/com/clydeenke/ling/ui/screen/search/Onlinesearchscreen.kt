@@ -98,18 +98,56 @@ fun OnlineSearchScreen(
     var songForDownload by remember { mutableStateOf<OnlineSong?>(null) }
 
     // 多榜单配置
-    val rankings = listOf("飙升榜" to 93, "热歌榜" to 16, "抖音榜" to 289, "新歌榜" to 17)
+    // 修改这行：匹配你提供的四个 API 链接
+    val rankings = listOf(
+        "热歌榜" to 16,
+        "新歌榜" to 17,
+        "飙升榜" to 93,
+        "抖音榜" to 158
+    )
     var currentRankIndex by remember { mutableStateOf(0) }
-
+    var currentPage by remember { mutableIntStateOf(1) } // 记录当前页码
+    var isMoreLoading by remember { mutableStateOf(false) } // 底部加载状态
     var hotSongs by remember { mutableStateOf<List<OnlineSong>>(emptyList()) }
     var isHotLoading by remember { mutableStateOf(true) }
 
-    // 监听榜单切换拉取数据
+    // 修改后的榜单切换监听
     LaunchedEffect(currentRankIndex) {
         isHotLoading = true
-        hotSongs = emptyList() // 清空产生过渡感
-        hotSongs = fetchKuwoRank(rankings[currentRankIndex].second)
+        currentPage = 1 // 切换榜单重置页码
+        hotSongs = emptyList()
+        hotSongs = fetchKuwoRank(rankings[currentRankIndex].second, 1) // 初始加载第1页
         isHotLoading = false
+    }
+    // 新增：加载下一页的函数
+    val loadNextPage: () -> Unit = {
+        // 只有在：不在加载中、且不是搜索状态、且榜单还有数据时才触发
+        if (!isMoreLoading && !isHotLoading && query.isBlank() && hotSongs.isNotEmpty()) {
+            scope.launch {
+                isMoreLoading = true
+                val nextPage = currentPage + 1
+
+                // 优化 1：稍微延迟 300 毫秒，防止用户快速来回滑动导致的瞬时并发
+                delay(300)
+
+                try {
+                    val newSongs = fetchKuwoRank(rankings[currentRankIndex].second, nextPage)
+                    if (newSongs.isNotEmpty()) {
+                        hotSongs = hotSongs + newSongs
+                        currentPage = nextPage
+                    } else {
+                        // 如果返回空，说明可能到底了或者被封了
+                        android.util.Log.d("MusicAPI", "没有更多歌曲或请求受限")
+                    }
+                } catch (e: Exception) {
+                    // 捕获异常，防止崩溃
+                } finally {
+                    // 优化 2：加载完成后，强制等待 1 秒才能进行下一次加载
+                    delay(1000)
+                    isMoreLoading = false
+                }
+            }
+        }
     }
 
     fun doSearch(tabIndex: Int = pagerState.currentPage) {
@@ -310,6 +348,13 @@ fun OnlineSearchScreen(
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 itemsIndexed(hotSongs, key = { _, s -> s.id }) { index, song ->
+                                    // 只有当滑动到【绝对最后一位】时才尝试加载下一页
+                                    if (index == hotSongs.size - 1) {
+                                        SideEffect {
+                                            loadNextPage()
+                                        }
+                                    }
+
                                     OnlineSongItem(
                                         song          = song,
                                         downloadState = downloadStates[song.id] ?: DownloadState.Idle,
@@ -325,6 +370,7 @@ fun OnlineSearchScreen(
                                         )
                                     }
                                 }
+
                             }
                         }
                     }
@@ -491,31 +537,34 @@ private fun OnlineSongItem(
 }
 
 // ── 拉取榜单 API ─────────────────────────────────────────────────────────────
-private suspend fun fetchKuwoRank(bangId: Int): List<OnlineSong> = withContext(Dispatchers.IO) {
+// ── 修改后的拉取榜单 API ─────────────────────────────────────────────────────────────
+private suspend fun fetchKuwoRank(bangId: Int, page: Int): List<OnlineSong> = withContext(Dispatchers.IO) {
     try {
-        val url = "https://wapi.kuwo.cn/api/www/bang/bang/musicList?bangId=$bangId&pn=1&rn=100"
+        // 关键修改：将 pn=1 改为 pn=$page
+        val url = "https://wapi.kuwo.cn/api/www/bang/bang/musicList?bangId=$bangId&pn=$page&rn=30"
         val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        conn.setRequestProperty("Referer", "http://www.kuwo.cn/")
-        conn.setRequestProperty("Cookie", "kw_token=QWERTYUIOP;")
+
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        conn.setRequestProperty("Referer", "https://www.kuwo.cn/")
         conn.setRequestProperty("csrf", "QWERTYUIOP")
+        conn.setRequestProperty("Cookie", "kw_token=QWERTYUIOP;")
+
         conn.connectTimeout = 8000
-        conn.readTimeout = 8000
         val text = conn.inputStream.bufferedReader().readText()
         conn.disconnect()
 
-        val list = JSONObject(text).getJSONObject("data").getJSONArray("musicList")
+        val json = JSONObject(text)
+        if (json.optInt("code") != 200) return@withContext emptyList()
+
+        val list = json.getJSONObject("data").getJSONArray("musicList")
         (0 until list.length()).mapNotNull { i ->
             val item = list.getJSONObject(i)
-            val title = item.optString("name")
-            val id = item.optString("rid")
-            if (id.isBlank() || title.isBlank()) return@mapNotNull null
             OnlineSong(
-                id       = id,
-                title    = title,
-                artist   = item.optString("artist").ifBlank { "未知艺术家" },
-                album    = item.optString("album").ifBlank { "未知专辑" },
-                duration = item.optInt("duration", 0),
+                id       = item.optString("rid"),
+                title    = item.optString("name"),
+                artist   = item.optString("artist"),
+                album    = item.optString("album"),
+                duration = item.optInt("duration"),
                 coverUrl = item.optString("pic"),
                 source   = MusicSource.KUWO
             )

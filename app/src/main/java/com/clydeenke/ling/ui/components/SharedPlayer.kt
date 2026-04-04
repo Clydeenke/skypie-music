@@ -119,6 +119,8 @@ fun SharedPlayerContainer(
     val song by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     if (song == null) return
 
+    // 多选模式激活时隐藏迷你播放条（底部操作栏独占空间）
+    val isMultiSelectActive by viewModel.isMultiSelectActive.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope   = rememberCoroutineScope()
@@ -444,7 +446,7 @@ fun SharedPlayerContainer(
 
             // ✅ 迷你播放条：始终固定在底部，不随卡片移动
             // 位置始终保持在屏幕底部正确位置
-            if (isMiniVisible) {
+            if (isMiniVisible && !isMultiSelectActive) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()

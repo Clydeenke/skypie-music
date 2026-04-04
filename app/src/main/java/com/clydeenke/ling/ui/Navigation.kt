@@ -31,61 +31,76 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clydeenke.ling.ui.components.SharedPlayerContainer
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import com.clydeenke.ling.ui.screen.folders.FolderScreen
+import com.clydeenke.ling.ui.screen.library.LibraryScreen
+import com.clydeenke.ling.ui.screen.playlist.PlaylistDetailScreen
+import com.clydeenke.ling.ui.screen.playlist.PlaylistListScreen
 import com.clydeenke.ling.ui.screen.search.OnlineSearchScreen
 import com.clydeenke.ling.ui.screen.settings.SettingsScreen
 import com.clydeenke.ling.viewmodel.MusicViewModel
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import com.clydeenke.ling.ui.screen.library.LibraryScreen
 
-// 🌟 新增：用一个干净的数据类管理页面状态，彻底抛弃旧的 Pager
-private data class NavState(val folder: Boolean, val online: Boolean, val settings: Boolean) {
-    val isSubPage: Boolean get() = folder || online || settings
+/** 导航状态数据类：统一管理当前展示的页面层级 */
+private data class NavState(
+    val folder     : Boolean,
+    val online     : Boolean,
+    val settings   : Boolean,
+    val playlists  : Boolean,
+    val playlistId : Long?
+) {
+    // 页面深度：数字越大越深，用于判断动画方向
+    val depth: Int get() = when {
+        playlistId != null               -> 3
+        playlists                        -> 2
+        folder || online || settings     -> 1
+        else                             -> 0
+    }
+    val isSubPage: Boolean get() = depth > 0
 }
-
 @Composable
 fun MainNavigation() {
     val viewModel   : MusicViewModel = hiltViewModel()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     val context      = LocalContext.current
 
-    var showFolderScreen by remember { mutableStateOf(false) }
-    var showOnlineSearch by remember { mutableStateOf(false) }
-    var showSettingsScreen by remember { mutableStateOf(false) } // 🌟 新增：控制设置界面的状态
+    var showFolderScreen   by remember { mutableStateOf(false)       }
+    var showOnlineSearch   by remember { mutableStateOf(false)       }
+    var showSettingsScreen by remember { mutableStateOf(false)       }
+    var showPlaylistList   by remember { mutableStateOf(false)       }
+    var showPlaylistDetail by remember { mutableStateOf<Long?>(null) }
 
-    // 预见式返回的手势进度（0=没在划，1=完全划过去了）
     var backProgress by remember { mutableFloatStateOf(0f) }
 
     val scope           = rememberCoroutineScope()
     val openPlayerEvent by viewModel.openPlayerEvent.collectAsStateWithLifecycle()
 
-    // ✅ 预见式返回：文件夹/云端搜索/设置 → 返回主页，手指跟随有动画
-    PredictiveBackHandler(enabled = showFolderScreen || showOnlineSearch || showSettingsScreen) { progress ->
+    // 把"是否在子页面"提取成变量，避免 PredictiveBackHandler 的 enabled 参数出现解析歧义
+    val isSubPageOpen = showFolderScreen || showOnlineSearch || showSettingsScreen
+            || showPlaylistList || showPlaylistDetail != null
+
+    PredictiveBackHandler(enabled = isSubPageOpen) { progress ->
         try {
             progress.collect { event ->
-                // 让页面跟着手指往右移动，产生"快要返回"的视觉预览
                 backProgress = event.progress
             }
-            // 手松开确认返回：精确判断当前在那一层，逐层关闭
-            if (showFolderScreen) {
-                showFolderScreen = false
-            } else if (showOnlineSearch) {
-                showOnlineSearch = false
-            } else {
-                showSettingsScreen = false
+            // 按层级逐层关闭
+            when {
+                showFolderScreen           -> showFolderScreen   = false
+                showOnlineSearch           -> showOnlineSearch   = false
+                showSettingsScreen         -> showSettingsScreen = false
+                showPlaylistDetail != null -> showPlaylistDetail = null
+                showPlaylistList           -> showPlaylistList   = false
             }
-
             scope.launch {
                 delay(250)
                 backProgress = 0f
-            }
+                }
         } catch (e: CancellationException) {
-            // 手缩回去，取消返回，恢复原位
             backProgress = 0f
         }
     }
@@ -103,16 +118,23 @@ fun MainNavigation() {
         Box(modifier = Modifier.fillMaxSize()) {
 
             AnimatedContent(
-                targetState    = NavState(showFolderScreen, showOnlineSearch, showSettingsScreen),
+                targetState = NavState(
+                    folder     = showFolderScreen,
+                    online     = showOnlineSearch,
+                    settings   = showSettingsScreen,
+                    playlists  = showPlaylistList,
+                    playlistId = showPlaylistDetail
+                ),
                 modifier       = Modifier
                     .fillMaxSize()
                     .hazeSource(state = hazeState),
                 transitionSpec = {
-                    val goingDeeper = targetState.isSubPage
-                    if (goingDeeper) {
+                    if (targetState.depth >= initialState.depth) {
+                        // 往更深走（或同级）→ 新页面从右边滑入
                         slideInHorizontally { it } + fadeIn(tween(220)) togetherWith
                                 slideOutHorizontally { -it / 4 } + fadeOut(tween(180))
                     } else {
+                        // 往回走 → 新页面从左边滑入（即"上一页"）
                         slideInHorizontally { -it / 4 } + fadeIn(tween(220)) togetherWith
                                 slideOutHorizontally { it } + fadeOut(tween(180))
                     }
@@ -123,7 +145,6 @@ fun MainNavigation() {
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            // 手指往里划时，子页面跟着往右移+缩小，像系统原生返回动画
                             if (state.isSubPage && backProgress > 0f) {
                                 translationX = size.width * backProgress * 0.35f
                                 scaleX = 1f - backProgress * 0.06f
@@ -148,25 +169,31 @@ fun MainNavigation() {
                                 onOpenPlayer       = { viewModel.requestOpenPlayer() }
                             )
                         }
-                        state.settings -> {
-                            // 🌟 设置界面现在作为一个独立的子层级弹出，不再跟侧边栏滑动冲突
-                            SettingsScreen(
-                                viewModel     = viewModel,
-                                onOpenFolders = { showFolderScreen = true }
-                            )
-                        }
-                        else -> {
-                            // 🌟 剥离了 HorizontalPager，LibraryScreen 现在是绝对的底层主页
-                            LibraryScreen(
-                                viewModel          = viewModel,
-                                onSongClick        = { songs, index -> viewModel.playSong(songs, index) },
-                                onOpenPlayer       = { viewModel.requestOpenPlayer() },
-                                onOpenOnlineSearch = { showOnlineSearch = true },
-                                onNavigateToSettings = { showSettingsScreen = true }, // 连接到我们刚写的侧滑抽屉
-                                onRefresh          = { viewModel.refresh() },
-                                hazeState          = hazeState,
-                            )
-                        }
+                        state.settings -> SettingsScreen(
+                            viewModel     = viewModel,
+                            onOpenFolders = { showFolderScreen = true }
+                        )
+                        // 歌单详情（优先于列表，避免同时为 true 时误匹配）
+                        state.playlistId != null -> PlaylistDetailScreen(
+                            playlistId = state.playlistId,
+                            viewModel  = viewModel,
+                            onBack     = { showPlaylistDetail = null }
+                        )
+                        state.playlists -> PlaylistListScreen(
+                            viewModel      = viewModel,
+                            onBack         = { showPlaylistList = false },
+                            onOpenPlaylist = { id: Long -> showPlaylistDetail = id }
+                        )
+                        else -> LibraryScreen(
+                            viewModel             = viewModel,
+                            onSongClick           = { songs, index -> viewModel.playSong(songs, index) },
+                            onOpenPlayer          = { viewModel.requestOpenPlayer() },
+                            onOpenOnlineSearch    = { showOnlineSearch = true },
+                            onNavigateToSettings  = { showSettingsScreen = true },
+                            onNavigateToPlaylists = { showPlaylistList = true },
+                            onRefresh             = { viewModel.refresh() },
+                            hazeState             = hazeState,
+                        )
                     }
                 }
             }

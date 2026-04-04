@@ -242,6 +242,21 @@ class PlayerController @Inject constructor(
         currentIndex = target
     }
 
+    /**
+     * 将指定歌曲插入到当前播放位置的紧下一首
+     * 不中断当前播放，其余队列顺序不变
+     */
+    fun playNext(song: Song) {
+        val mc = mediaController ?: return
+        // 插入位置 = 当前索引 + 1，边界保护：不超过列表末尾
+        val insertIndex = (mc.currentMediaItemIndex + 1).coerceIn(0, mc.mediaItemCount)
+        mc.addMediaItem(insertIndex, song.toMediaItem())
+        // 同步更新内存队列，保证 getSongAt() / getCurrentIndex() 等查询准确
+        currentQueue = currentQueue.toMutableList().apply {
+            add(insertIndex.coerceIn(0, size), song)
+        }
+    }
+
     fun release() {
         mediaController?.release()
         controllerFuture?.cancel(false)

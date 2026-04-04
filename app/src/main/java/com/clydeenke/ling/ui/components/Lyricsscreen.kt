@@ -63,23 +63,6 @@ import kotlin.math.abs
 
 private val HALF_SCREEN_PAD = 360.dp
 
-/**
- * 完全平滑滚到目标行居中，绝不跳跃：
- *
- * 核心思路：LazyColumn 的"滚动坐标系"是
- *   currentScrollPx = firstVisibleItemIndex * avgItemHeight - firstVisibleItemScrollOffset
- *
- * 目标行在内容坐标中的位置：
- *   targetContentPx = contentPaddingTop + index * avgItemHeight
- *
- * 想让目标行顶部停在 viewport 中点：
- *   targetScrollPx = targetContentPx - viewportHeight/2
- *
- * delta = targetScrollPx - currentScrollPx → 用 Animatable 全程 scrollBy
- *
- * 目标可见时直接读真实 offset，完全精确；不可见时用平均行高估算，
- * 这里误差很小（行高变化不超过 20%），而且是单段动画，不会出现中途跳跃。
- */
 private suspend fun androidx.compose.foundation.lazy.LazyListState.fullySmoothScrollToCenter(
     index          : Int,
     contentPadTopPx: Int,   // contentPadding top 转换成 px
