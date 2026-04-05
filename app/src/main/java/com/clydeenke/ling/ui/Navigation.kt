@@ -45,7 +45,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** 导航状态数据类：统一管理当前展示的页面层级 */
 private data class NavState(
     val folder     : Boolean,
     val online     : Boolean,
@@ -53,15 +52,15 @@ private data class NavState(
     val playlists  : Boolean,
     val playlistId : Long?
 ) {
-    // 页面深度：数字越大越深，用于判断动画方向
     val depth: Int get() = when {
-        playlistId != null               -> 3
-        playlists                        -> 2
-        folder || online || settings     -> 1
-        else                             -> 0
+        playlistId != null           -> 3
+        playlists                    -> 2
+        folder || online || settings -> 1
+        else                         -> 0
     }
     val isSubPage: Boolean get() = depth > 0
 }
+
 @Composable
 fun MainNavigation() {
     val viewModel   : MusicViewModel = hiltViewModel()
@@ -79,7 +78,6 @@ fun MainNavigation() {
     val scope           = rememberCoroutineScope()
     val openPlayerEvent by viewModel.openPlayerEvent.collectAsStateWithLifecycle()
 
-    // 把"是否在子页面"提取成变量，避免 PredictiveBackHandler 的 enabled 参数出现解析歧义
     val isSubPageOpen = showFolderScreen || showOnlineSearch || showSettingsScreen
             || showPlaylistList || showPlaylistDetail != null
 
@@ -88,7 +86,12 @@ fun MainNavigation() {
             progress.collect { event ->
                 backProgress = event.progress
             }
-            // 按层级逐层关闭
+            // ── 修复歌单动画 bug ──────────────────────────────────────────────
+            // 先把 backProgress 归零，让 graphicsLayer transform 消失，
+            // 再等一帧，然后才切换导航状态触发 AnimatedContent 过渡动画。
+            // 原来的顺序是先切状态再延迟归零，导致两段动画叠在一起出现闪烁。
+            backProgress = 0f
+            delay(16)
             when {
                 showFolderScreen           -> showFolderScreen   = false
                 showOnlineSearch           -> showOnlineSearch   = false
@@ -96,16 +99,11 @@ fun MainNavigation() {
                 showPlaylistDetail != null -> showPlaylistDetail = null
                 showPlaylistList           -> showPlaylistList   = false
             }
-            scope.launch {
-                delay(250)
-                backProgress = 0f
-                }
         } catch (e: CancellationException) {
             backProgress = 0f
         }
     }
 
-    // 每 5 秒保存播放进度
     LaunchedEffect(Unit) {
         while (isActive) {
             delay(5_000)
@@ -130,11 +128,9 @@ fun MainNavigation() {
                     .hazeSource(state = hazeState),
                 transitionSpec = {
                     if (targetState.depth >= initialState.depth) {
-                        // 往更深走（或同级）→ 新页面从右边滑入
                         slideInHorizontally { it } + fadeIn(tween(220)) togetherWith
                                 slideOutHorizontally { -it / 4 } + fadeOut(tween(180))
                     } else {
-                        // 往回走 → 新页面从左边滑入（即"上一页"）
                         slideInHorizontally { -it / 4 } + fadeIn(tween(220)) togetherWith
                                 slideOutHorizontally { it } + fadeOut(tween(180))
                     }
@@ -171,9 +167,9 @@ fun MainNavigation() {
                         }
                         state.settings -> SettingsScreen(
                             viewModel     = viewModel,
+                            onBack        = { showSettingsScreen = false }, // ← 修复：补上 onBack
                             onOpenFolders = { showFolderScreen = true }
                         )
-                        // 歌单详情（优先于列表，避免同时为 true 时误匹配）
                         state.playlistId != null -> PlaylistDetailScreen(
                             playlistId = state.playlistId,
                             viewModel  = viewModel,
@@ -200,12 +196,7 @@ fun MainNavigation() {
 
             AnimatedVisibility(
                 visible  = currentSong != null,
-                enter    = slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioNoBouncy,
-                        stiffness    = Spring.StiffnessMediumLow
-                    )
-                ) { it } + fadeIn(tween(180)),
+                enter    = slideInVertically(animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(tween(180)),
                 exit     = slideOutVertically { it } + fadeOut(tween(130)),
                 modifier = Modifier.fillMaxSize()
             ) {

@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.edit
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -25,6 +26,7 @@ private const val KEY_API_URL = "api_url"
 @Composable
 fun SettingsScreen(
     viewModel    : MusicViewModel,
+    onBack       : () -> Unit = {},   // ← 新增返回回调
     onOpenFolders: () -> Unit = {}
 ) {
     val context  = LocalContext.current
@@ -39,7 +41,6 @@ fun SettingsScreen(
     val invalidFiles    by viewModel.invalidFiles.collectAsStateWithLifecycle()
     val isCheckingFiles by viewModel.isCheckingFiles.collectAsStateWithLifecycle()
 
-    // 扫描完有无效文件时自动弹出确认框
     LaunchedEffect(invalidFiles) {
         if (invalidFiles.isNotEmpty()) showInvalidDialog = true
     }
@@ -51,11 +52,25 @@ fun SettingsScreen(
             .statusBarsPadding()
             .padding(horizontal = 20.dp)
     ) {
-        Text(
-            text     = "设置",
-            style    = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(top = 16.dp, bottom = 20.dp)
-        )
+        // ── 顶部标题栏（返回按钮 + 居中标题） ───────────────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.ArrowBackIosNew, contentDescription = "返回", tint = MaterialTheme.colorScheme.onSurface)
+            }
+            Text(
+                text      = "设置",
+                style     = MaterialTheme.typography.headlineLarge,
+                textAlign = TextAlign.Center,
+                modifier  = Modifier.weight(1f)
+            )
+            // 右侧占位，保持标题视觉居中
+            Spacer(modifier = Modifier.size(48.dp))
+        }
 
         // ── 本地音乐 ──────────────────────────────────────────────────────────
         SettingsGroupLabel("本地音乐")
@@ -106,31 +121,12 @@ fun SettingsScreen(
             title = { Text("API 接口地址") },
             text  = {
                 Column {
-                    Text(
-                        "输入你的音乐 API 地址，例如：\nhttps://your-api.com",
-                        style    = MaterialTheme.typography.bodySmall,
-                        color    = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    )
-                    OutlinedTextField(
-                        value         = apiInput,
-                        onValueChange = { apiInput = it },
-                        placeholder   = { Text("https://") },
-                        singleLine    = true,
-                        modifier      = Modifier.fillMaxWidth()
-                    )
+                    Text("输入你的音乐 API 地址，例如：\nhttps://your-api.com", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 12.dp))
+                    OutlinedTextField(value = apiInput, onValueChange = { apiInput = it }, placeholder = { Text("https://") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    apiUrl = apiInput.trim()
-                    prefs.edit { putString(KEY_API_URL, apiUrl) }
-                    showApiDialog = false
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showApiDialog = false }) { Text("取消") }
-            }
+            confirmButton = { TextButton(onClick = { apiUrl = apiInput.trim(); prefs.edit { putString(KEY_API_URL, apiUrl) }; showApiDialog = false }) { Text("保存") } },
+            dismissButton = { TextButton(onClick = { showApiDialog = false }) { Text("取消") } }
         )
     }
 
@@ -141,39 +137,13 @@ fun SettingsScreen(
             title = { Text("发现 ${invalidFiles.size} 个无效文件") },
             text  = {
                 Column {
-                    Text(
-                        "以下文件无法播放（残缺或损坏），是否全部删除？",
-                        style    = MaterialTheme.typography.bodySmall,
-                        color    = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    invalidFiles.take(5).forEach { file ->
-                        Text(
-                            "• ${file.name}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (invalidFiles.size > 5) {
-                        Text(
-                            "… 还有 ${invalidFiles.size - 5} 个",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Text("以下文件无法播放（残缺或损坏），是否全部删除？", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
+                    invalidFiles.take(5).forEach { Text("• ${it.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (invalidFiles.size > 5) Text("… 还有 ${invalidFiles.size - 5} 个", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        viewModel.deleteInvalidFiles()
-                        showInvalidDialog = false
-                    }
-                ) { Text("全部删除", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showInvalidDialog = false }) { Text("取消") }
-            }
+            confirmButton = { TextButton(onClick = { viewModel.deleteInvalidFiles(); showInvalidDialog = false }) { Text("全部删除", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { showInvalidDialog = false }) { Text("取消") } }
         )
     }
 
@@ -183,15 +153,8 @@ fun SettingsScreen(
             onDismissRequest = { showCleanOldDialog = false },
             title = { Text("清理旧缓存") },
             text  = { Text("将删除旧版本遗留在 App 内部的封面和歌词缓存文件，不影响音频和音乐库。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    viewModel.cleanOldPrivateFiles()
-                    showCleanOldDialog = false
-                }) { Text("确认清理") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCleanOldDialog = false }) { Text("取消") }
-            }
+            confirmButton = { TextButton(onClick = { viewModel.cleanOldPrivateFiles(); showCleanOldDialog = false }) { Text("确认清理") } },
+            dismissButton = { TextButton(onClick = { showCleanOldDialog = false }) { Text("取消") } }
         )
     }
 }
@@ -200,56 +163,25 @@ fun SettingsScreen(
 
 @Composable
 private fun SettingsGroupLabel(text: String) {
-    Text(
-        text     = text,
-        style    = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-        color    = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
-    )
+    Text(text = text, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 4.dp, bottom = 8.dp))
 }
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        shape  = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp)), modifier = Modifier.fillMaxWidth()) {
         Column { content() }
     }
 }
 
 @Composable
-private fun SettingsItem(
-    icon   : androidx.compose.ui.graphics.vector.ImageVector,
-    title  : String,
-    summary: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+private fun SettingsItem(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, summary: String, onClick: () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                summary,
-                style    = MaterialTheme.typography.bodySmall,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
+            Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
-        Icon(
-            Icons.Rounded.ChevronRight, null,
-            tint     = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-            modifier = Modifier.size(20.dp)
-        )
+        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.size(20.dp))
     }
 }

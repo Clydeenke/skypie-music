@@ -50,6 +50,8 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import com.clydeenke.ling.util.LrcLine
 import com.clydeenke.ling.util.LrcParser
+import org.jaudiotagger.audio.AudioFileIO
+import org.jaudiotagger.tag.FieldKey
 import com.clydeenke.ling.viewmodel.MusicViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -237,12 +239,20 @@ fun SharedPlayerContainer(
                     }
                 }
             } else {
-                // 本地播放：从文件读
+                // 本地播放：优先读 ID3 嵌入歌词，找不到再查 .lrc 文件
                 val fp  = song?.folderPath ?: return@LaunchedEffect
                 val t   = song?.title      ?: return@LaunchedEffect
                 val fp2 = song?.filePath   ?: ""
                 val ar  = song?.artist     ?: ""
-                withContext(Dispatchers.IO) { lrcLines = LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList() }
+                withContext(Dispatchers.IO) {
+                    val embedded = if (fp2.isNotBlank()) try {
+                        AudioFileIO.read(java.io.File(fp2)).tag
+                            ?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                    } catch (_: Exception) { null } else null
+
+                    lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
+                    else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                }
             }
         }
 
@@ -364,27 +374,18 @@ fun SharedPlayerContainer(
                 .offset { IntOffset(0, animOffset.value.roundToInt()) }
                 .drawBehind {
                     val p = (1f - animOffset.value / dragRange).coerceIn(0f, 1f)
-
-                    // ✅ 关键改动：p=0（迷你状态）时完全不画背景卡片
-                    // 让迷你播放条自己的玻璃层负责背景，不再遮挡它
-                    // p>0 开始往上滑时，卡片背景慢慢淡入
                     if (p <= 0f) return@drawBehind
-
-                    // 前15%的滑动行程里，卡片从透明渐变到不透明（过渡更自然）
                     val cardAlpha = (p / 0.15f).coerceIn(0f, 1f)
-
                     val bgX = sidePx * (1f - p)
                     val bgW = size.width - 2f * sidePx * (1f - p)
                     val bgH = miniHPx + (size.height - miniHPx) * p
                     val cr  = CornerRadius(cornerMaxPx * (1f - p))
-
                     drawRoundRect(
                         color        = surfaceColor.copy(alpha = cardAlpha),
                         topLeft      = Offset(bgX, 0f),
                         size         = Size(bgW, bgH),
                         cornerRadius = cr
                     )
-
                     if (p > 0.01f) {
                         val clipPath = androidx.compose.ui.graphics.Path().apply {
                             addRoundRect(androidx.compose.ui.geometry.RoundRect(
@@ -444,8 +445,6 @@ fun SharedPlayerContainer(
                 }
             }
 
-            // ✅ 迷你播放条：始终固定在底部，不随卡片移动
-            // 位置始终保持在屏幕底部正确位置
             if (isMiniVisible && !isMultiSelectActive) {
                 Box(
                     modifier = Modifier
@@ -477,9 +476,6 @@ fun MiniPlayer(
     val radius = MiniPlayerHeight / 2
     val isDark = isSystemInDarkTheme()
 
-    // 🌟 核心修复：解决 accentColor 报错
-    // 这里我们先设定：如果有颜色就用颜色，没有就用主题色
-    // 以后你可以学习如何用 Palette 库把这个颜色存进 s.accentColor
     val targetColor = MaterialTheme.colorScheme.primaryContainer
 
     val dominantColor by animateColorAsState(
@@ -492,21 +488,18 @@ fun MiniPlayer(
         modifier = Modifier
             .fillMaxWidth()
             .height(MiniPlayerHeight)
-            // 1. 外部大阴影：给它一个柔和的扩散感
             .shadow(
                 elevation = 12.dp,
                 shape = RoundedCornerShape(radius),
                 spotColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.15f),
                 ambientColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.1f)
             )
-            // 2. 这里的 border 就是解决“白色融合”的关键
             .border(
                 width = 0.8.dp,
                 color = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.05f),
                 shape = RoundedCornerShape(radius)
             )
     ) {
-        // 内部的 HazeEffect 和内容保持不变...
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -515,9 +508,8 @@ fun MiniPlayer(
                     state = hazeState,
                     style = dev.chrisbanes.haze.HazeStyle(
                         blurRadius = 12.dp,
-                        noiseFactor = 0.02f, // 稍微降低噪点，让它更通透
+                        noiseFactor = 0.02f,
                         tints = listOf(
-                            // 亮色模式下稍微压深一点点，暗色模式保持原样
                             dev.chrisbanes.haze.HazeTint(
                                 color = if (isDark) Color.Transparent
                                 else Color.Black.copy(alpha = 0.02f)
@@ -527,7 +519,6 @@ fun MiniPlayer(
                 )
         )
 
-        // 层2：顶部微光描边
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -548,7 +539,6 @@ fun MiniPlayer(
                 }
         )
 
-        // 层3：内容
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -561,7 +551,6 @@ fun MiniPlayer(
                 contentAlignment = Alignment.CenterStart
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 封面：48dp，带小阴影
                     AsyncImage(
                         model = s.albumArtUri,
                         contentDescription = null,
@@ -596,7 +585,6 @@ fun MiniPlayer(
                 }
             }
 
-            // 控制按键
             val iconTint = if (isDark) Color.White else Color.Black
 
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -671,7 +659,6 @@ private fun FullPlayer(
     val displaySong = controller.getSongAt(pagerState.currentPage) ?: song
     val onBg = Color.White
 
-    // 收藏 + 自动下载
     val context = LocalContext.current
     var isFavorite by remember(displaySong?.id) {
         val prefs = context.getSharedPreferences("ling_favorites", 0)
@@ -685,7 +672,6 @@ private fun FullPlayer(
         isFavorite   = newState
         prefs.edit().putBoolean(displaySong?.id?.toString() ?: "", newState).apply()
 
-        // 云端歌曲：收藏时自动下载到本地 Music/Ling 目录
         if (newState) {
             val streamUrl = controller.getCurrentStreamUrl() ?: return
             val song      = displaySong             ?: return
@@ -707,7 +693,6 @@ private fun FullPlayer(
         }
     }
 
-    // 歌词预览：从外层传入的 lrcLines + currentMs
     val onlineLrcText by viewModel.playerController.onlineLrcText.collectAsStateWithLifecycle()
     val isOnlineMode  by viewModel.playerController.isOnlineMode.collectAsStateWithLifecycle()
     var lrcLines by remember { mutableStateOf<List<LrcLine>>(emptyList()) }
@@ -716,12 +701,22 @@ private fun FullPlayer(
         if (isOnlineMode) {
             if (onlineLrcText.isNotBlank()) withContext(Dispatchers.IO) { lrcLines = LrcParser.parse(onlineLrcText) }
         } else {
-            val fp = displaySong?.folderPath ?: return@LaunchedEffect
-            val t  = displaySong?.title      ?: return@LaunchedEffect
-            withContext(Dispatchers.IO) { lrcLines = LrcParser.loadForSong(fp, t, displaySong?.filePath ?: "", displaySong?.artist ?: "") ?: emptyList() }
+            val fp  = displaySong?.folderPath ?: return@LaunchedEffect
+            val t   = displaySong?.title      ?: return@LaunchedEffect
+            val fp2 = displaySong?.filePath   ?: ""
+            val ar  = displaySong?.artist     ?: ""
+            withContext(Dispatchers.IO) {
+                val embedded = if (fp2.isNotBlank()) try {
+                    AudioFileIO.read(java.io.File(fp2)).tag
+                        ?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                } catch (_: Exception) { null } else null
+
+                lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
+                else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+            }
         }
     }
-    // 当前歌词行索引
+
     val currentLrcIdx = remember(currentMs, lrcLines) {
         if (lrcLines.isEmpty()) -1
         else {
@@ -742,7 +737,6 @@ private fun FullPlayer(
             .systemBarsPadding(),
         horizontalAlignment = Alignment.Start
     ) {
-        // 顶部栏
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).then(fadeAlpha),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onCollapse, Modifier.size(48.dp)) {
@@ -755,7 +749,6 @@ private fun FullPlayer(
                 Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f)) }
         }
 
-        // ── 封面 ───────────────────────────────────────────────────────────
         Box(Modifier.fillMaxWidth().weight(1f).padding(vertical = FullPagerPad), contentAlignment = Alignment.Center) {
             HorizontalPager(state = pagerState, Modifier.fillMaxSize()) { page ->
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -770,7 +763,6 @@ private fun FullPlayer(
 
         Spacer(Modifier.height(14.dp))
 
-        // ── 歌名 + 收藏 ────────────────────────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).then(fadeAlpha),
             verticalAlignment = Alignment.CenterVertically
@@ -809,11 +801,7 @@ private fun FullPlayer(
             )
             IconButton(onClick = { if (!isDownloading) toggleFavorite() }, Modifier.size(48.dp)) {
                 if (isDownloading) {
-                    CircularProgressIndicator(
-                        modifier  = Modifier.size(22.dp),
-                        color     = onBg.copy(alpha = 0.7f),
-                        strokeWidth = 2.dp
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(22.dp), color = onBg.copy(alpha = 0.7f), strokeWidth = 2.dp)
                 } else {
                     Icon(
                         imageVector        = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
@@ -827,15 +815,12 @@ private fun FullPlayer(
 
         Spacer(Modifier.height(14.dp))
 
-        // ── 歌词传送带（歌名下方，当前行居中，上下渐变遮罩）─────────────────
         val lrcLineHeightDp = 24.dp
-        val lrcWindowLines  = 3   // 显示3行：上一句（半透明）+ 当前句（高亮）+ 下一句（半透明）
+        val lrcWindowLines  = 3
         val lrcListState    = rememberLazyListState()
 
-        // currentLrcIdx 变化时滚动，使当前行显示在中间（offset = -1行高）
         LaunchedEffect(currentLrcIdx) {
             if (currentLrcIdx >= 0 && lrcLines.isNotEmpty()) {
-                // index偏移+1是因为顶部有一个留白item
                 lrcListState.animateScrollToItem(
                     index        = (currentLrcIdx).coerceAtLeast(0),
                     scrollOffset = 0
@@ -851,11 +836,9 @@ private fun FullPlayer(
                 .height(lrcWindowHeight)
                 .padding(horizontal = 24.dp)
                 .then(fadeAlpha)
-                // 整体做alpha遮罩，上下渐变淡出
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                 .drawWithContent {
                     drawContent()
-                    // 上遮罩：顶部透明→中间不透明
                     drawRect(
                         brush = Brush.verticalGradient(
                             0f to Color.Transparent,
@@ -864,7 +847,6 @@ private fun FullPlayer(
                         ),
                         blendMode = BlendMode.DstIn
                     )
-                    // 下遮罩：中间不透明→底部透明
                     drawRect(
                         brush = Brush.verticalGradient(
                             0f to Color.Black,
@@ -881,7 +863,6 @@ private fun FullPlayer(
                     userScrollEnabled = false,
                     modifier          = Modifier.fillMaxSize()
                 ) {
-                    // 顶部留白一行，让第一句歌词能滚到中间位置
                     item { Spacer(Modifier.height(lrcLineHeightDp)) }
 
                     itemsIndexed(lrcLines) { idx, line ->
@@ -900,7 +881,7 @@ private fun FullPlayer(
                             targetValue   = if (isActive) 1.05f else 1f,
                             animationSpec = spring(
                                 dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness    = Spring.StiffnessLow   // 更慢更弹
+                                stiffness    = Spring.StiffnessLow
                             ),
                             label         = "lrcScale$idx"
                         )
@@ -924,7 +905,6 @@ private fun FullPlayer(
                         )
                     }
 
-                    // 底部留白一行，让最后一句能滚到中间
                     item { Spacer(Modifier.height(lrcLineHeightDp)) }
                 }
             } else {
@@ -934,7 +914,6 @@ private fun FullPlayer(
 
         Spacer(Modifier.height(10.dp))
 
-        // 进度条
         Column(Modifier.padding(horizontal = 20.dp).then(fadeAlpha)) {
             val prog = if (isScrubbing) scrubProg else (currentMs.toFloat() / durationMs).coerceIn(0f, 1f)
             Slider(value = prog,
@@ -949,10 +928,8 @@ private fun FullPlayer(
         }
         Spacer(Modifier.height(12.dp))
 
-        // 控制按钮
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).then(fadeAlpha),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            // 循环按钮：开启=白色全亮，关闭=白色半透明
             IconButton(onClick = { controller.toggleRepeat() }, Modifier.size(48.dp)) {
                 Icon(
                     imageVector = when (repeatMode) { Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne; else -> Icons.Rounded.Repeat },
@@ -968,7 +945,6 @@ private fun FullPlayer(
                 Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(36.dp), tint = Color(0xFF1A1A1A)) }
             IconButton(onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)) } }, Modifier.size(56.dp)) {
                 Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp), tint = onBg) }
-            // 歌词按钮：慢速滑入歌词页
             IconButton(onClick = { scope.launch { lyricsSlide.animateTo(screenHPx, tween(550, easing = androidx.compose.animation.core.EaseInOutCubic)) } }, Modifier.size(48.dp)) {
                 Icon(Icons.Rounded.Lyrics, null, Modifier.size(22.dp), tint = onBg.copy(alpha = 0.55f))
             }

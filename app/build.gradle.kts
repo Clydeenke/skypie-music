@@ -84,6 +84,7 @@ dependencies {
     implementation(libs.androidx.compose.animation)
     implementation("io.github.fletchmckee.liquid:liquid:1.1.1")
     implementation(libs.compose.cloudy)
+    implementation("net.jthink:jaudiotagger:3.0.1")
 
     // 注释掉暂时不用的accompanist依赖
     // implementation(libs.accompanist.systemuicontroller)
