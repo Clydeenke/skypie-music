@@ -104,9 +104,6 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.kotlinx.coroutines.android)
 
-    // ✅ 新增：读取音乐文件内嵌歌词（ID3/Vorbis 标签）
-    implementation("net.jthink:jaudiotagger:3.0.1")
-
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.tooling.preview)
     implementation(libs.haze)

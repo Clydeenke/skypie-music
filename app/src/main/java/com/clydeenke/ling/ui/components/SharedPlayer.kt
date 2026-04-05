@@ -239,16 +239,27 @@ fun SharedPlayerContainer(
                     }
                 }
             } else {
-                // 本地播放：优先读 ID3 嵌入歌词，找不到再查 .lrc 文件
                 val fp  = song?.folderPath ?: return@LaunchedEffect
                 val t   = song?.title      ?: return@LaunchedEffect
                 val fp2 = song?.filePath   ?: ""
                 val ar  = song?.artist     ?: ""
                 withContext(Dispatchers.IO) {
-                    val embedded = if (fp2.isNotBlank()) try {
-                        AudioFileIO.read(java.io.File(fp2)).tag
-                            ?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
-                    } catch (_: Exception) { null } else null
+
+                    // 尝试读 ID3 嵌入歌词
+                    val embedded: String? = if (fp2.isNotBlank()) {
+                        try {
+                            val af = AudioFileIO.read(java.io.File(fp2))
+                            af.tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                        } catch (_: Exception) {
+                            null
+                        }
+                    } else null
+
+                    lrcLines = if (!embedded.isNullOrBlank()) {
+                        LrcParser.parse(embedded)
+                    } else {
+                        LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                    }
 
                     lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
                     else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
@@ -706,14 +717,23 @@ private fun FullPlayer(
             val fp2 = displaySong?.filePath   ?: ""
             val ar  = displaySong?.artist     ?: ""
             withContext(Dispatchers.IO) {
-                val embedded = if (fp2.isNotBlank()) try {
-                    AudioFileIO.read(java.io.File(fp2)).tag
-                        ?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
-                } catch (_: Exception) { null } else null
 
-                lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
-                else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
-            }
+                // 尝试读 ID3 嵌入歌词
+                val embedded: String? = if (fp2.isNotBlank()) {
+                    try {
+                        val af = AudioFileIO.read(java.io.File(fp2))
+                        af.tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else null
+
+                lrcLines = if (!embedded.isNullOrBlank()) {
+                    LrcParser.parse(embedded)
+                } else {
+                    LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                }
+                }
         }
     }
 
