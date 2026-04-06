@@ -86,18 +86,16 @@ fun MainNavigation() {
             progress.collect { event ->
                 backProgress = event.progress
             }
-            // ── 修复歌单动画 bug ──────────────────────────────────────────────
-            // 先把 backProgress 归零，让 graphicsLayer transform 消失，
-            // 再等一帧，然后才切换导航状态触发 AnimatedContent 过渡动画。
-            // 原来的顺序是先切状态再延迟归零，导致两段动画叠在一起出现闪烁。
-            backProgress = 0f
-            delay(16)
             when {
-                showFolderScreen           -> showFolderScreen   = false
-                showOnlineSearch           -> showOnlineSearch   = false
-                showSettingsScreen         -> showSettingsScreen = false
+                showFolderScreen -> showFolderScreen = false
+                showOnlineSearch -> showOnlineSearch = false
+                showSettingsScreen -> showSettingsScreen = false
                 showPlaylistDetail != null -> showPlaylistDetail = null
-                showPlaylistList           -> showPlaylistList   = false
+                showPlaylistList -> showPlaylistList = false
+            }
+                scope.launch {
+                    delay(250)
+                    backProgress = 0f
             }
         } catch (e: CancellationException) {
             backProgress = 0f

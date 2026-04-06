@@ -22,6 +22,7 @@ android {
     namespace = "com.clydeenke.ling"
     compileSdk = 36
 
+
     defaultConfig {
         applicationId = "com.clydeenke.ling"
         minSdk = 26
@@ -47,6 +48,7 @@ android {
     kotlin {
         compilerOptions {
             jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+            freeCompilerArgs.addAll("-opt-in=androidx.compose.animation.ExperimentalAnimationApi")
         }
     }
     buildFeatures { compose = true }
@@ -58,6 +60,7 @@ android {
             excludes += "mozilla/public-suffix-list.txt"
         }
     }
+
 }
 
 dependencies {

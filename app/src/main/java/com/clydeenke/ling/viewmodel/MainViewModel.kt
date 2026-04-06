@@ -4,6 +4,7 @@ import android.app.Application
 import android.media.MediaMetadataRetriever
 import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
+import com.clydeenke.ling.domain.lyrics.DesktopLyricsPrefs
 import androidx.lifecycle.viewModelScope
 import com.clydeenke.ling.data.repository.MusicRepository
 import com.clydeenke.ling.data.repository.PlaylistRepository
@@ -41,7 +42,8 @@ class MusicViewModel @Inject constructor(
     application                  : Application,
     private val repository       : MusicRepository,
     private val playlistRepository: PlaylistRepository,  // 歌单仓库
-    val playerController         : PlayerController
+    val playerController         : PlayerController,
+    val lyricsPrefs               : DesktopLyricsPrefs
 ) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_PLAYER, 0)

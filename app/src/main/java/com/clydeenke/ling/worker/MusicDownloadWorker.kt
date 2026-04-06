@@ -14,7 +14,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
-import org.jaudiotagger.tag.images.AndroidArtwork // 🌟 核心：Android 专属图片注入类
 import java.io.File
 import java.net.URL
 import java.util.logging.Level
@@ -216,6 +215,7 @@ class MusicDownloadWorker(
             audioFileWithExt.delete()
             tmpAudio.delete()
             tmpCover.delete()
+            coil.Coil.imageLoader(context).memoryCache?.clear()
 
             nm.notify(notifId, NotificationCompat.Builder(context, channelId)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
