@@ -3,7 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
-    id("com.google.devtools.ksp") version "2.3.0"
+    alias(libs.plugins.ksp)
 }
 
 kotlin {
@@ -19,16 +19,16 @@ kotlin {
 }
 
 android {
-    namespace = "com.clydeenke.ling"
+    namespace = "com.yulight.skypie"
     compileSdk = 36
 
 
     defaultConfig {
-        applicationId = "com.clydeenke.ling"
-        minSdk = 26
-        targetSdk = 36  // 更新到最新稳定版
-        versionCode = 7
-        versionName = "1.3.0-alpha2"
+        applicationId = "com.yulight.skypie"
+        minSdk = 29
+        targetSdk = 36
+        versionCode = 9
+        versionName = "1.3.0-beta"
     }
 
     buildTypes {
@@ -53,7 +53,7 @@ android {
     }
     buildFeatures { compose = true }
 
-    // ✅ 打包时排除 JAudioTagger 带的多余文件，避免冲突
+    //打包时排除 JAudioTagger 带的多余文件，避免冲突
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

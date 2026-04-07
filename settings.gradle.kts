@@ -23,6 +23,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Ling"
+rootProject.name = "skypie"
 include(":app")
  
