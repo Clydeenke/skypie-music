@@ -23,11 +23,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.skypie"
-<<<<<<< HEAD
         android:enableOnBackInvokedCallback="false"
-=======
-        android:enableOnBackInvokedCallback="true"
->>>>>>> origin/master
         android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
         <activity
