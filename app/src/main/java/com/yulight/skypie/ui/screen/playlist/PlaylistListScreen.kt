@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material3.*
@@ -42,11 +43,8 @@ fun PlaylistListScreen(
 ) {
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
 
-    // ── 新建歌单对话框状态 ──────────────────────────────────────────────────
-    var showCreateDialog  by remember { mutableStateOf(false) }
-    var newPlaylistName   by remember { mutableStateOf("")    }
-
-    // ── 删除确认对话框状态 ──────────────────────────────────────────────────
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var newPlaylistName  by remember { mutableStateOf("")    }
     var playlistToDelete by remember { mutableStateOf<Playlist?>(null) }
 
     Scaffold(
@@ -77,7 +75,6 @@ fun PlaylistListScreen(
             )
         },
         floatingActionButton = {
-            // 底部加 80dp 偏移，避免被悬浮迷你播放条遮挡
             Box(modifier = Modifier.padding(bottom = 80.dp)) {
                 FloatingActionButton(
                     onClick        = { showCreateDialog = true },
@@ -93,11 +90,8 @@ fun PlaylistListScreen(
         },
     ) { paddingValues ->
         if (playlists.isEmpty()) {
-            // 空状态提示
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues),
+                modifier         = Modifier.fillMaxSize().padding(paddingValues),
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -123,47 +117,39 @@ fun PlaylistListScreen(
             }
         } else {
             LazyColumn(
-                modifier        = Modifier.padding(paddingValues),
-                contentPadding  = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                modifier            = Modifier.padding(paddingValues),
+                contentPadding      = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(items = playlists, key = { it.id }) { playlist ->
                     PlaylistCard(
-                        playlist  = playlist,
-                        onClick   = { onOpenPlaylist(playlist.id) },
-                        onDelete  = { playlistToDelete = playlist }
+                        playlist = playlist,
+                        onClick  = { onOpenPlaylist(playlist.id) },
+                        onDelete = { playlistToDelete = playlist }
                     )
                 }
-                // 底部留白，避免 FAB 遮挡最后一项
                 item { Spacer(modifier = Modifier.height(80.dp)) }
             }
         }
     }
 
-    // ── 新建歌单对话框 ────────────────────────────────────────────────────────
     if (showCreateDialog) {
         AlertDialog(
-            onDismissRequest = {
-                showCreateDialog = false
-                newPlaylistName  = ""
-            },
+            onDismissRequest = { showCreateDialog = false; newPlaylistName = "" },
             title   = { Text("新建歌单") },
             text    = {
                 OutlinedTextField(
-                    value         = newPlaylistName,
-                    onValueChange = { newPlaylistName = it },
-                    label         = { Text("歌单名称") },
-                    singleLine    = true,
+                    value           = newPlaylistName,
+                    onValueChange   = { newPlaylistName = it },
+                    label           = { Text("歌单名称") },
+                    singleLine      = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(
-                        onDone = {
-                            if (newPlaylistName.isNotBlank()) {
-                                viewModel.createPlaylist(newPlaylistName)
-                                newPlaylistName  = ""
-                                showCreateDialog = false
-                            }
+                    keyboardActions = KeyboardActions(onDone = {
+                        if (newPlaylistName.isNotBlank()) {
+                            viewModel.createPlaylist(newPlaylistName)
+                            newPlaylistName = ""; showCreateDialog = false
                         }
-                    ),
+                    }),
                     modifier = Modifier.fillMaxWidth()
                 )
             },
@@ -172,39 +158,27 @@ fun PlaylistListScreen(
                     onClick  = {
                         if (newPlaylistName.isNotBlank()) {
                             viewModel.createPlaylist(newPlaylistName)
-                            newPlaylistName  = ""
-                            showCreateDialog = false
+                            newPlaylistName = ""; showCreateDialog = false
                         }
                     },
                     enabled = newPlaylistName.isNotBlank()
                 ) { Text("创建") }
             },
             dismissButton = {
-                TextButton(
-                    onClick = {
-                        showCreateDialog = false
-                        newPlaylistName  = ""
-                    }
-                ) { Text("取消") }
+                TextButton(onClick = { showCreateDialog = false; newPlaylistName = "" }) { Text("取消") }
             }
         )
     }
 
-    // ── 删除歌单确认对话框 ────────────────────────────────────────────────────
     playlistToDelete?.let { playlist ->
         AlertDialog(
             onDismissRequest = { playlistToDelete = null },
             title   = { Text("删除歌单") },
             text    = { Text("确定删除「${playlist.name}」吗？歌单内的歌曲不会被删除。") },
-            confirmButton   = {
+            confirmButton = {
                 TextButton(
-                    onClick = {
-                        viewModel.deletePlaylist(playlist.id)
-                        playlistToDelete = null
-                    },
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
+                    onClick = { viewModel.deletePlaylist(playlist.id); playlistToDelete = null },
+                    colors  = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("删除") }
             },
             dismissButton = {
@@ -214,9 +188,6 @@ fun PlaylistListScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PlaylistCard —— 歌单列表卡片
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun PlaylistCard(
     playlist : Playlist,
@@ -224,10 +195,8 @@ private fun PlaylistCard(
     onDelete : () -> Unit,
 ) {
     val dateStr = remember(playlist.createdAt) {
-        SimpleDateFormat("yyyy/MM/dd", Locale.getDefault())
-            .format(Date(playlist.createdAt))
+        SimpleDateFormat("yyyy/MM/dd", Locale.getDefault()).format(Date(playlist.createdAt))
     }
-    // 用歌单第一首歌的封面作缩略图
     val thumbnailUri = playlist.songs.firstOrNull()?.albumArtUri
 
     Row(
@@ -239,9 +208,8 @@ private fun PlaylistCard(
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // 封面缩略图
         Box(
-            modifier        = Modifier
+            modifier         = Modifier
                 .size(56.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.secondaryContainer),
@@ -249,10 +217,10 @@ private fun PlaylistCard(
         ) {
             if (thumbnailUri != null) {
                 AsyncImage(
-                    model          = thumbnailUri,
+                    model              = thumbnailUri,
                     contentDescription = "歌单封面",
-                    contentScale   = ContentScale.Crop,
-                    modifier       = Modifier.fillMaxSize()
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier.fillMaxSize()
                 )
             } else {
                 Icon(
@@ -266,13 +234,12 @@ private fun PlaylistCard(
 
         Spacer(modifier = Modifier.width(16.dp))
 
-        // 歌单信息
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text       = playlist.name,
-                style      = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                maxLines   = 1,
-                overflow   = TextOverflow.Ellipsis
+                text     = playlist.name,
+                style    = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
@@ -282,10 +249,9 @@ private fun PlaylistCard(
             )
         }
 
-        // 长按/右键删除（用小图标按钮实现，简单直观）
         IconButton(onClick = onDelete) {
             Icon(
-                imageVector        = Icons.Rounded.Add, // 替换为 DeleteOutline（见下方说明）
+                imageVector        = Icons.Rounded.DeleteOutline,
                 contentDescription = "删除歌单",
                 tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier           = Modifier.size(20.dp)

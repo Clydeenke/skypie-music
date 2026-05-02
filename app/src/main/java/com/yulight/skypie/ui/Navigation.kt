@@ -53,10 +53,11 @@ private data class NavState(
     val playlistId : Long?
 ) {
     val depth: Int get() = when {
-        playlistId != null           -> 3
-        playlists                    -> 2
-        folder || online || settings -> 1
-        else                         -> 0
+        playlistId != null -> 3
+        playlists          -> 2
+        folder             -> 2
+        online || settings -> 1
+        else               -> 0
     }
     val isSubPage: Boolean get() = depth > 0
 }
@@ -104,7 +105,7 @@ fun MainNavigation() {
 
     LaunchedEffect(Unit) {
         while (isActive) {
-            delay(5_000)
+            delay(1_000)
             viewModel.savePlaybackProgress()
         }
     }

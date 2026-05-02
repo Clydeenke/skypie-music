@@ -150,11 +150,19 @@ class MusicViewModel @Inject constructor(
         playerController.playNext(song)
     }
 
+    fun removeFromQueue(index: Int) {
+        playerController.removeFromQueue(index)
+    }
+
+    fun clearQueue() {
+        playerController.clearQueue()
+    }
+
     fun savePlaybackProgress() {
         val song = playerController.currentSong.value ?: return
         val pos  = playerController.getCurrentPosition()
         // 仅在实际播放时累积时长（每 5 秒调用一次，加 5 秒）
-        val addMs    = if (playerController.isPlaying.value) 5_000L else 0L
+        val addMs    = if (playerController.isPlaying.value) 1_000L else 0L
         val newTotal = _totalListenedMs.value + addMs
         _totalListenedMs.value = newTotal
         prefs.edit()

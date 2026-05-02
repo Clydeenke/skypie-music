@@ -186,6 +186,7 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(80.dp))
         Spacer(Modifier.navigationBarsPadding())
     }
 

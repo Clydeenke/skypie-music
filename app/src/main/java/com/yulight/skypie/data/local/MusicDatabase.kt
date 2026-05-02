@@ -17,11 +17,19 @@ import com.yulight.skypie.data.local.entity.SongEntity
         PlaylistEntity::class,        // 歌单表
         PlaylistSongCrossRef::class   // 歌单-歌曲关联表
     ],
+<<<<<<< HEAD
+    version      = 3,
+=======
     version      = 3,          // 版本 +1，AppModule 已配置 fallbackToDestructiveMigration
+>>>>>>> origin/master
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {
     abstract fun songDao()       : SongDao
     abstract fun scanFolderDao() : ScanFolderDao
+<<<<<<< HEAD
+    abstract fun playlistDao()   : PlaylistDao  
+=======
     abstract fun playlistDao()   : PlaylistDao   // 新增
+>>>>>>> origin/master
 }

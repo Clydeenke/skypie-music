@@ -17,7 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 import javax.inject.Singleton
-
+@androidx.media3.common.util.UnstableApi
 @Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context
@@ -255,6 +255,22 @@ class PlayerController @Inject constructor(
         currentQueue = currentQueue.toMutableList().apply {
             add(insertIndex.coerceIn(0, size), song)
         }
+    }
+
+    fun removeFromQueue(index: Int) {
+        val mc = mediaController ?: return
+        if (index < 0 || index >= currentQueue.size) return
+        mc.removeMediaItem(index)
+        currentQueue = currentQueue.toMutableList().apply { removeAt(index) }
+        // 如果移除的是当前之前的歌，currentIndex 要往前移一位
+        if (index < currentIndex) currentIndex--
+    }
+
+    fun clearQueue() {
+        val mc = mediaController ?: return
+        mc.clearMediaItems()
+        currentQueue = emptyList()
+        currentIndex = 0
     }
 
     fun release() {
