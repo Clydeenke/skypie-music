@@ -26,8 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.imageLoader
+import coil.request.ImageRequest
+import coil.request.SuccessResult
+import coil.memory.MemoryCache
 import com.yulight.skypie.data.remote.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,11 +55,82 @@ fun OnlineSearchScreen(
     val kugouError      by viewModel.kugouError.collectAsStateWithLifecycle()
     val rankSongs       by viewModel.rankSongs.collectAsStateWithLifecycle()
     val rankLoading     by viewModel.rankLoading.collectAsStateWithLifecycle()
+    val rankLoadingMore by viewModel.rankLoadingMore.collectAsStateWithLifecycle()
     val currentRankIdx  by viewModel.currentRankIndex.collectAsStateWithLifecycle()
     val downloadStates  by viewModel.downloadStates.collectAsStateWithLifecycle()
     val playStates      by viewModel.playStates.collectAsStateWithLifecycle()
+    val kuwoLoadingMore  by viewModel.kuwoLoadingMore.collectAsStateWithLifecycle()
+    val kugouLoadingMore by viewModel.kugouLoadingMore.collectAsStateWithLifecycle()
+
+    // 预加载搜索结果封面
+    LaunchedEffect(kuwoResults) {
+        if (kuwoResults.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                kuwoResults.take(30).forEach { song ->
+                    if (song.coverUrl.isNotBlank()) {
+                        try {
+                            val cacheKey = MemoryCache.Key(song.coverUrl)
+                            if (context.imageLoader.memoryCache?.get(cacheKey) != null) return@forEach
+                            val request = ImageRequest.Builder(context)
+                                .data(song.coverUrl)
+                                .size(120)
+                                .memoryCacheKey(cacheKey)
+                                .diskCacheKey(song.coverUrl)
+                                .build()
+                            context.imageLoader.execute(request)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
+    }
+    LaunchedEffect(kugouResults) {
+        if (kugouResults.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                kugouResults.take(30).forEach { song ->
+                    if (song.coverUrl.isNotBlank()) {
+                        try {
+                            val cacheKey = MemoryCache.Key(song.coverUrl)
+                            if (context.imageLoader.memoryCache?.get(cacheKey) != null) return@forEach
+                            val request = ImageRequest.Builder(context)
+                                .data(song.coverUrl)
+                                .size(120)
+                                .memoryCacheKey(cacheKey)
+                                .diskCacheKey(song.coverUrl)
+                                .build()
+                            context.imageLoader.execute(request)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
+    }
 
     var songForDownload by remember { mutableStateOf<OnlineSong?>(null) }
+
+    // 预加载榜单封面
+    LaunchedEffect(rankSongs) {
+        if (rankSongs.isNotEmpty()) {
+            withContext(Dispatchers.IO) {
+                rankSongs.take(30).forEach { song ->
+                    if (song.coverUrl.isNotBlank()) {
+                        try {
+                            // 先检查内存缓存是否已存在
+                            val cacheKey = MemoryCache.Key(song.coverUrl)
+                            if (context.imageLoader.memoryCache?.get(cacheKey) != null) return@forEach
+                            val request = ImageRequest.Builder(context)
+                                .data(song.coverUrl)
+                                .size(120)
+                                .memoryCacheKey(cacheKey)
+                                .diskCacheKey(song.coverUrl)
+                                .build()
+                            context.imageLoader.execute(request)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+        }
+    }
 
     val tabs       = MusicSource.entries.map { it.displayName }
     val pagerState = rememberPagerState(pageCount = { tabs.size })
@@ -161,7 +238,7 @@ fun OnlineSearchScreen(
                                         playState     = playStates[song.id]     ?: PlayState.Idle,
                                         onDownload    = { songForDownload = song },
                                         onPlay        = {
-                                            viewModel.play(song, onOpenPlayer, ::showNoApiToast)
+                                            viewModel.play(rankSongs, index, onOpenPlayer, ::showNoApiToast)
                                         }
                                     )
                                     if (index < rankSongs.lastIndex) {
@@ -170,6 +247,20 @@ fun OnlineSearchScreen(
                                             thickness = 0.5.dp,
                                             color     = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                                         )
+                                    }
+                                }
+                                // 加载更多指示器
+                                if (rankLoadingMore) {
+                                    item {
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(24.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -229,13 +320,19 @@ fun OnlineSearchScreen(
                                             )
                                         }
                                         itemsIndexed(results, key = { _, s -> s.id }) { index, song ->
+                                            if (index == results.lastIndex) {
+                                                SideEffect {
+                                                    if (page == 0) viewModel.loadMoreKuwo()
+                                                    else viewModel.loadMoreKugou()
+                                                }
+                                            }
                                             SongListItem(
                                                 song          = song,
                                                 downloadState = downloadStates[song.id] ?: DownloadState.Idle,
                                                 playState     = playStates[song.id]     ?: PlayState.Idle,
                                                 onDownload    = { songForDownload = song },
                                                 onPlay        = {
-                                                    viewModel.play(song, onOpenPlayer, ::showNoApiToast)
+                                                    viewModel.play(results, index, onOpenPlayer, ::showNoApiToast)
                                                 }
                                             )
                                             if (index < results.lastIndex) {
@@ -244,6 +341,20 @@ fun OnlineSearchScreen(
                                                     thickness = 0.5.dp,
                                                     color     = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                                                 )
+                                            }
+                                        }
+                                        // 加载更多指示器
+                                        if ((page == 0 && kuwoLoadingMore) || (page == 1 && kugouLoadingMore)) {
+                                            item {
+                                                Box(
+                                                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(24.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                }
                                             }
                                         }
                                     }

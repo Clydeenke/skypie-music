@@ -56,12 +56,13 @@ class OnlineMusicApi @Inject constructor() {
 
     /**
      * 搜索酷我歌曲
+     * @param page 页码，从 1 开始
      */
-    suspend fun searchKuwo(keyword: String): List<OnlineSong> = withContext(Dispatchers.IO) {
+    suspend fun searchKuwo(keyword: String, page: Int = 1): List<OnlineSong> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(keyword, "UTF-8")
             val conn = openConnection(
-                "http://search.kuwo.cn/r.s?client=kt&all=$encoded&pn=0&rn=30" +
+                "http://search.kuwo.cn/r.s?client=kt&all=$encoded&pn=${page - 1}&rn=30" +
                         "&uid=794762&ver=kwplayer_ar_9.2.2.1&vipver=1&show_copyright_off=1" +
                         "&newver=1&ft=music&cluster=0&strategy=2012&encoding=utf8&rformat=json&mobi=1&issubtitle=1"
             )
@@ -120,13 +121,14 @@ class OnlineMusicApi @Inject constructor() {
 
     /**
      * 搜索酷狗歌曲
+     * @param page 页码，从 1 开始
      */
-    suspend fun searchKugou(keyword: String): List<OnlineSong> = withContext(Dispatchers.IO) {
+    suspend fun searchKugou(keyword: String, page: Int = 1): List<OnlineSong> = withContext(Dispatchers.IO) {
         try {
             val encoded = URLEncoder.encode(keyword, "UTF-8")
             val conn = openConnection(
                 "https://songsearch.kugou.com/song_search_v2?keyword=$encoded" +
-                        "&page=1&pagesize=30&userid=0&clientver=&platform=WebFilter" +
+                        "&page=$page&pagesize=30&userid=0&clientver=&platform=WebFilter" +
                         "&filter=2&iscorrection=1&privilege_filter=0&area_code=1"
             )
             val text = conn.inputStream.bufferedReader().readText().also { conn.disconnect() }

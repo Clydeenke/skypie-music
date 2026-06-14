@@ -20,24 +20,15 @@ class OnlineMusicRepository @Inject constructor(
 
     // ── 搜索 ──────────────────────────────────────────────────────────────────
 
-    suspend fun search(keyword: String, source: MusicSource): List<OnlineSong> = when (source) {
-<<<<<<< HEAD
-        MusicSource.KUWO  -> api.searchKuwo(keyword).distinctBy { it.id }
-        MusicSource.KUGOU -> api.searchKugou(keyword).distinctBy { it.id }
-=======
-        MusicSource.KUWO  -> api.searchKuwo(keyword)
-        MusicSource.KUGOU -> api.searchKugou(keyword)
->>>>>>> origin/master
+    suspend fun search(keyword: String, source: MusicSource, page: Int = 1): List<OnlineSong> = when (source) {
+        MusicSource.KUWO  -> api.searchKuwo(keyword, page).distinctBy { it.id }
+        MusicSource.KUGOU -> api.searchKugou(keyword, page).distinctBy { it.id }
     }
 
     // ── 榜单 ──────────────────────────────────────────────────────────────────
 
     suspend fun fetchRank(rankId: Int, page: Int): List<OnlineSong> =
-<<<<<<< HEAD
         api.fetchKuwoRank(rankId, page).distinctBy { it.id }
-=======
-        api.fetchKuwoRank(rankId, page)
->>>>>>> origin/master
 
     // ── 播放链接（需要用户配置 API 地址） ─────────────────────────────────────
 

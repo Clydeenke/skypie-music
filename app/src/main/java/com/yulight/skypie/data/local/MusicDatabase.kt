@@ -14,22 +14,14 @@ import com.yulight.skypie.data.local.entity.SongEntity
     entities = [
         SongEntity::class,
         ScanFolderEntity::class,
-        PlaylistEntity::class,        // 歌单表
-        PlaylistSongCrossRef::class   // 歌单-歌曲关联表
+        PlaylistEntity::class,
+        PlaylistSongCrossRef::class
     ],
-<<<<<<< HEAD
-    version      = 3,
-=======
-    version      = 3,          // 版本 +1，AppModule 已配置 fallbackToDestructiveMigration
->>>>>>> origin/master
+    version = 3,
     exportSchema = false
 )
 abstract class MusicDatabase : RoomDatabase() {
-    abstract fun songDao()       : SongDao
-    abstract fun scanFolderDao() : ScanFolderDao
-<<<<<<< HEAD
-    abstract fun playlistDao()   : PlaylistDao  
-=======
-    abstract fun playlistDao()   : PlaylistDao   // 新增
->>>>>>> origin/master
+    abstract fun songDao(): SongDao
+    abstract fun scanFolderDao(): ScanFolderDao
+    abstract fun playlistDao(): PlaylistDao
 }
