@@ -28,7 +28,7 @@ class PlayerController @Inject constructor(
 
     private var currentQueue : List<Song> = emptyList()
     private var currentIndex : Int        = 0
-    val songLrcMap = mutableMapOf<Long, String>()
+    val songLrcMap = mutableMapOf<String, String>()  // key: song.id 转为 String
 
     // 在线播放：存储原始歌曲列表、URL缓存、切歌回调
     var onlineSongs: List<OnlineSong> = emptyList()
@@ -38,18 +38,26 @@ class PlayerController @Inject constructor(
 
     private val _isPlaying    = MutableStateFlow(false)
     private val _currentSong  = MutableStateFlow<Song?>(null)
-    private val _shuffleMode  = MutableStateFlow(false)
     private val _repeatMode   = MutableStateFlow(Player.REPEAT_MODE_ALL)
+    // 当前播放模式：0=循环全部, 1=单曲循环, 2=随机播放
+    private val _playMode     = MutableStateFlow(0)
     // 当前是否在播放在线流（用于UI判断，比如不显示删除按钮）
     private val _isOnlineMode   = MutableStateFlow(false)
     private val _onlineLrcText  = MutableStateFlow("")   // 在线播放时的歌词文本
 
     val isPlaying    : StateFlow<Boolean> = _isPlaying.asStateFlow()
     val currentSong  : StateFlow<Song?>   = _currentSong.asStateFlow()
-    val shuffleMode  : StateFlow<Boolean> = _shuffleMode.asStateFlow()
     val repeatMode   : StateFlow<Int>     = _repeatMode.asStateFlow()
+    val playMode     : StateFlow<Int>     = _playMode.asStateFlow()
     val isOnlineMode : StateFlow<Boolean> = _isOnlineMode.asStateFlow()
     val onlineLrcText: StateFlow<String>  = _onlineLrcText.asStateFlow()
+
+    /**
+     * 更新在线歌词显示（供外部调用，如实时加载歌词）
+     */
+    fun updateOnlineLrcText(text: String) {
+        _onlineLrcText.value = text
+    }
 
     private var _currentStreamUrl: String? = null
     fun getCurrentStreamUrl(): String? = _currentStreamUrl
@@ -57,39 +65,58 @@ class PlayerController @Inject constructor(
     private val listener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             _isPlaying.value = isPlaying
+            // 开始播放时预取下一首歌曲的 URL
+            if (isPlaying && _isOnlineMode.value) {
+                preFetchNextUrl()
+            }
         }
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
             // 正在更新URL时忽略transition，避免重复跳歌
             if (isUpdatingUrl) return
             val mediaId = item?.mediaId
             if (!mediaId.isNullOrEmpty()) {
-                // 在线歌曲用 "online_index" 格式，本地歌曲用 id.toString()
-                val song = if (_isOnlineMode.value && mediaId.startsWith("online_")) {
-                    val idx = mediaId.removePrefix("online_").toIntOrNull() ?: 0
-                    currentQueue.getOrNull(idx)
-                } else {
-                    currentQueue.find { it.id.toString() == mediaId }
-                }
+                // 用歌曲唯一ID查找，不用位置索引
+                val song = currentQueue.find { it.id.toString() == mediaId }
                 if (song != null) {
                     _currentSong.value = song
                     currentIndex = currentQueue.indexOf(song)
                     // 更新在线播放的 streamUrl 和歌词
                     if (_isOnlineMode.value) {
                         _currentStreamUrl = song.uri
-                        _onlineLrcText.value = songLrcMap[song.id] ?: ""
-                        // 通知外部切歌（用于按需解析URL）
-                        val idx = mediaId.removePrefix("online_").toIntOrNull() ?: currentIndex
-                        onSongTransition?.invoke(idx)
+                        _onlineLrcText.value = songLrcMap[song.id.toString()] ?: ""
+                        // 通知外部切歌（用于按需解析URL和歌词）
+                        onSongTransition?.invoke(currentIndex)
+                        // 预取下一首的 URL
+                        preFetchNextUrl()
                     }
                 }
             }
         }
-        override fun onShuffleModeEnabledChanged(enabled: Boolean) {
-            _shuffleMode.value = enabled
-        }
         override fun onRepeatModeChanged(mode: Int) {
             _repeatMode.value = mode
         }
+    }
+
+    /**
+     * 预取下一首歌曲的 URL（后台静默加载）
+     */
+    private fun preFetchNextUrl() {
+        val nextIndex = currentIndex + 1
+        if (nextIndex >= currentQueue.size) {
+            // 队列末尾，循环模式下预取第一首
+            if (_repeatMode.value == Player.REPEAT_MODE_ALL && currentQueue.isNotEmpty()) {
+                val firstSong = currentQueue[0]
+                if (firstSong.uri.startsWith("placeholder_")) {
+                    onSongTransition?.invoke(0)
+                }
+            }
+            return
+        }
+        val nextSong = currentQueue[nextIndex]
+        // 如果不是 placeholder，跳过
+        if (!nextSong.uri.startsWith("placeholder_")) return
+        // 通知外部解析 URL
+        onSongTransition?.invoke(nextIndex)
     }
 
     fun connect() {
@@ -120,7 +147,7 @@ class PlayerController @Inject constructor(
             .build()
         return MediaItem.Builder()
             .setUri(uri)
-            .setMediaId(if (isOnline) "online_$index" else id.toString())
+            .setMediaId(id.toString())  // 用歌曲唯一ID，不用位置索引
             .setMediaMetadata(metadata)
             .build()
     }
@@ -133,9 +160,9 @@ class PlayerController @Inject constructor(
         _currentStreamUrl   = if (isOnline) songs[startIdx].uri else null
         // 存储歌词到 map
         if (isOnline && lrcText.isNotBlank()) {
-            songLrcMap[songs[startIdx].id] = lrcText
+            songLrcMap[songs[startIdx].id.toString()] = lrcText
         }
-        _onlineLrcText.value = if (isOnline) (songLrcMap[songs[startIdx].id] ?: "") else ""
+        _onlineLrcText.value = if (isOnline) (songLrcMap[songs[startIdx].id.toString()] ?: "") else ""
         currentQueue = songs
         currentIndex = startIdx
         val items = songs.mapIndexed { index, song -> song.toMediaItem(index, isOnline) }
@@ -155,7 +182,7 @@ class PlayerController @Inject constructor(
         val isOnline = songs[idx].uri.startsWith("http")
         _isOnlineMode.value = isOnline
         _currentStreamUrl   = if (isOnline) songs[idx].uri else null
-        _onlineLrcText.value = if (isOnline) (songLrcMap[songs[idx].id] ?: "") else ""
+        _onlineLrcText.value = if (isOnline) (songLrcMap[songs[idx].id.toString()] ?: "") else ""
         currentQueue = songs
         currentIndex = idx
         val items = songs.mapIndexed { index, song -> song.toMediaItem(index, isOnline) }
@@ -197,15 +224,34 @@ class PlayerController @Inject constructor(
         }
     }
 
-    fun seekTo(ms: Long)  { mediaController?.seekTo(ms) }
+    fun seekTo(ms: Long) {
+        // 限制最大位置为 duration - 1000ms，避免触发歌曲结束
+        val maxPos = getDuration() - 1000
+        val target = if (maxPos > 0) ms.coerceAtMost(maxPos) else ms
+        mediaController?.seekTo(target)
+    }
     fun togglePlayPause() { mediaController?.let { if (it.isPlaying) it.pause() else it.play() } }
-    fun toggleShuffle()   { mediaController?.let { it.shuffleModeEnabled = !it.shuffleModeEnabled } }
-    fun toggleRepeat() {
+
+    /**
+     * 切换播放模式：循环全部(0) → 单曲循环(1) → 随机播放(2) → 循环全部(0)
+     */
+    fun togglePlayMode() {
+        val newMode = (_playMode.value + 1) % 3
+        _playMode.value = newMode
         mediaController?.let {
-            it.repeatMode = when (it.repeatMode) {
-                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                else                   -> Player.REPEAT_MODE_OFF
+            when (newMode) {
+                0 -> { // 循环全部
+                    it.repeatMode = Player.REPEAT_MODE_ALL
+                    it.shuffleModeEnabled = false
+                }
+                1 -> { // 单曲循环
+                    it.repeatMode = Player.REPEAT_MODE_ONE
+                    it.shuffleModeEnabled = false
+                }
+                2 -> { // 随机播放
+                    it.repeatMode = Player.REPEAT_MODE_ALL
+                    it.shuffleModeEnabled = true
+                }
             }
         }
     }
@@ -218,10 +264,13 @@ class PlayerController @Inject constructor(
 
     /**
      * 更新队列中指定位置的 MediaItem URI（用于在线歌曲按需解析URL后更新）
+     * @param forceResume 如果为 true，即使之前暂停了也恢复播放（用于 placeholder 解析完成后）
      */
-    fun updateMediaItemUrl(index: Int, newUrl: String) {
+    fun updateMediaItemUrl(index: Int, newUrl: String, forceResume: Boolean = false) {
         val mc = mediaController ?: return
         if (index < 0 || index >= mc.mediaItemCount) return
+        // 如果是当前正在播放的歌曲，需要特殊处理
+        val isCurrentItem = (index == currentIndex)
         // 设置标志，避免触发transition回调导致跳歌
         isUpdatingUrl = true
         try {
@@ -236,17 +285,17 @@ class PlayerController @Inject constructor(
                 .build()
             val newItem = MediaItem.Builder()
                 .setUri(newUrl)
-                .setMediaId("online_$index")
+                .setMediaId(song.id.toString())  // 用歌曲唯一ID
                 .setMediaMetadata(metadata)
                 .build()
-            // 替换 MediaItem
-            val wasPlaying = mc.isPlaying
-            val pos = mc.currentPosition
+            // 替换 MediaItem（不 seekTo，让 ExoPlayer 自然播放）
             mc.removeMediaItem(index)
             mc.addMediaItem(index, newItem)
-            // 恢复播放状态
-            mc.seekTo(index, if (index == currentIndex) pos else 0L)
-            if (wasPlaying) mc.play()
+            // 只有当前歌曲才需要恢复播放状态
+            if (isCurrentItem && forceResume) {
+                mc.seekTo(index, mc.currentPosition)
+                mc.play()
+            }
             // 同步更新 currentQueue
             currentQueue = currentQueue.toMutableList().apply {
                 set(index, song.copy(uri = newUrl))

@@ -28,6 +28,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
@@ -108,14 +109,16 @@ fun SharedPlayerContainer(
     val isDark  = isSystemInDarkTheme()
 
     var rawPalette by remember { mutableStateOf(AlbumPalette()) }
+    var coverBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
     LaunchedEffect(song?.albumArtUri) {
-        val uri = song?.albumArtUri ?: run { rawPalette = AlbumPalette(); return@LaunchedEffect }
+        val uri = song?.albumArtUri ?: run { rawPalette = AlbumPalette(); coverBitmap = null; return@LaunchedEffect }
         withContext(Dispatchers.IO) {
             try {
                 val req = ImageRequest.Builder(context)
                     .data(uri).size(120).allowHardware(false).build()
                 val bmp = (context.imageLoader.execute(req) as? SuccessResult)
                     ?.drawable?.let { (it as? BitmapDrawable)?.bitmap } ?: return@withContext
+                coverBitmap = bmp
                 val p = Palette.Builder(bmp).generate()
 
                 fun adjustColor(argb: Int, maxLight: Float): Color {
@@ -336,6 +339,27 @@ fun SharedPlayerContainer(
             val cx = width / 2f; val cy = height / 2f
             val r  = width.coerceAtLeast(height)
             val baseAlpha = if (isDark) 0.55f else 0.70f
+
+            // 绘制封面作为背景（正常比例，覆盖屏幕）
+            coverBitmap?.let { bmp ->
+                val bitmap = bmp.asImageBitmap()
+                // 计算缩放比例：确保覆盖整个屏幕，但不过度放大
+                val scaleX = width / bitmap.width
+                val scaleY = height / bitmap.height
+                val scale = maxOf(scaleX, scaleY)  // 取较大值确保覆盖
+                val scaledWidth = bitmap.width * scale
+                val scaledHeight = bitmap.height * scale
+                val offsetX = (width - scaledWidth) / 2f
+                val offsetY = (height - scaledHeight) / 2f
+                drawImage(
+                    image = bitmap,
+                    dstOffset = androidx.compose.ui.unit.IntOffset(offsetX.toInt(), offsetY.toInt()),
+                    dstSize = androidx.compose.ui.unit.IntSize(scaledWidth.toInt(), scaledHeight.toInt()),
+                    alpha = 0.25f * alpha
+                )
+            }
+
+            // 极光效果
             drawRect(color = color1.copy(alpha = baseAlpha * alpha), size = Size(width, height))
             val h1x = cx + cos(flowAngle1) * width * 0.42f
             val h1y = cy + sin(flowAngle1) * height * 0.35f

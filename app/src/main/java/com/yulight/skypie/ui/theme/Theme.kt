@@ -10,51 +10,44 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary      = YunBlue80,
-    secondary    = YunBlueGrey80,
-    background   = TgBgDark,
-    surface      = TgSurface,
-    onPrimary    = Color.Black,
-    onBackground = Color.White,
-    onSurface    = Color.White,
-)
-
-private val LightColorScheme = lightColorScheme(
-    primary      = YunBlue40,
-    secondary    = YunBlueGrey40,
-    background   = Color.White,
-    surface      = TgBgLight,
-    onPrimary    = Color.White,
-    onBackground = Color.Black,
-    onSurface    = Color.Black,
-)
+val LocalThemeIndex = compositionLocalOf { mutableIntStateOf(0) }
 
 @Composable
 fun skypieTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    // 动态取色逻辑：Android 12+ 会根据壁纸自动调整颜色
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("skypie_settings", 0) }
+
+    val themeIndexState = remember { mutableIntStateOf(prefs.getInt("theme_color_index", 0)) }
+    val themeIndex by themeIndexState
+    // themeIndex 0=跟随系统, 1+=对应 themeColors[0], themeColors[1]...
+    val selectedTheme = if (themeIndex > 0) themeColors[themeIndex - 1] else themeColors[0]
+
     val colorScheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context)
-            else dynamicLightColorScheme(context)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && themeIndex == 0 -> {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
-        darkTheme -> DarkColorScheme
-        else      -> LightColorScheme
+        darkTheme -> darkColorScheme(
+            primary = selectedTheme.dark, secondary = selectedTheme.darkSecondary,
+            background = TgBgDark, surface = TgSurface,
+            onPrimary = Color.Black, onBackground = Color.White, onSurface = Color.White,
+        )
+        else -> lightColorScheme(
+            primary = selectedTheme.light, secondary = selectedTheme.lightSecondary,
+            background = Color.White, surface = TgBgLight,
+            onPrimary = Color.White, onBackground = Color.Black, onSurface = Color.Black,
+        )
     }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
             val window = (view.context as Activity).window
-            // Android 16 强制 edge-to-edge
             WindowCompat.setDecorFitsSystemWindows(window, false)
             window.statusBarColor = android.graphics.Color.TRANSPARENT
             window.navigationBarColor = android.graphics.Color.TRANSPARENT
-
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !darkTheme
                 isAppearanceLightNavigationBars = !darkTheme
@@ -62,9 +55,7 @@ fun skypieTheme(
         }
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    CompositionLocalProvider(LocalThemeIndex provides themeIndexState) {
+        MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    }
 }

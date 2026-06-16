@@ -3,7 +3,7 @@ package com.yulight.skypie.ui.screen.search
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.*
+import com.yulight.skypie.BuildConfig
 import com.yulight.skypie.data.remote.AudioQuality
 import com.yulight.skypie.data.remote.DownloadState
 import com.yulight.skypie.data.remote.KUWO_RANKS
@@ -12,8 +12,8 @@ import com.yulight.skypie.data.remote.OnlineSong
 import com.yulight.skypie.data.remote.PlayState
 import com.yulight.skypie.data.repository.OnlineMusicRepository
 import com.yulight.skypie.domain.model.Song
+import com.yulight.skypie.service.DownloadManager
 import com.yulight.skypie.service.PlayerController
-import com.yulight.skypie.worker.MusicDownloadWorker
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
@@ -29,15 +29,18 @@ private const val KEY_API_URL    = "api_url"
 class OnlineSearchViewModel @Inject constructor(
     application            : Application,
     private val repository : OnlineMusicRepository,
-    val playerController   : PlayerController
+    val playerController   : PlayerController,
+    private val downloadManager: DownloadManager
 ) : AndroidViewModel(application) {
 
     private val app = application
 
     // ── API 地址（从 SharedPreferences 实时读取，用户在设置里改了立刻生效） ──
     val apiBase: String
-        get() = app.getSharedPreferences(PREFS_SETTINGS, 0)
-            .getString(KEY_API_URL, "") ?: ""
+        get() {
+            val customUrl = app.getSharedPreferences(PREFS_SETTINGS, 0).getString(KEY_API_URL, "") ?: ""
+            return if (customUrl.isNotBlank()) customUrl else BuildConfig.DEFAULT_API_URL
+        }
 
     // ── 搜索 ──────────────────────────────────────────────────────────────────
 
@@ -239,12 +242,11 @@ class OnlineSearchViewModel @Inject constructor(
     private fun prefetchNewSongsLyrics(songs: List<OnlineSong>) {
         viewModelScope.launch {
             for (song in songs) {
-                val songId = song.id.toLongOrNull() ?: -1L
-                if (playerController.songLrcMap.containsKey(songId)) continue
+                if (playerController.songLrcMap.containsKey(song.id)) continue
                 try {
                     val lrc = repository.fetchLyric(song)
                     if (lrc.isNotBlank()) {
-                        playerController.songLrcMap[songId] = lrc
+                        playerController.songLrcMap[song.id] = lrc
                     }
                 } catch (_: Exception) {}
             }
@@ -299,19 +301,19 @@ class OnlineSearchViewModel @Inject constructor(
                 playerController.urlCache[song.id] = streamUrl
                 // 获取歌词
                 val lrcText = try { repository.fetchLyric(song) } catch (_: Exception) { "" }
-                val songId = song.id.toLongOrNull() ?: -1L
                 if (lrcText.isNotBlank()) {
-                    playerController.songLrcMap[songId] = lrcText
+                    playerController.songLrcMap[song.id] = lrcText
                 }
                 // 存储原始歌曲列表
                 playerController.onlineSongs = songs
                 // 注册切歌回调（按需解析URL）
                 playerController.onSongTransition = { newIndex -> resolveNextUrl(newIndex) }
                 // 构建队列：只用点击歌曲的URL，其他用空占位
+                // 用索引作为 Song ID，避免 hash ID 转 Long 后重复
                 val songObjs = songs.mapIndexed { i, s ->
                     val url = if (i == index) streamUrl else (playerController.urlCache[songs[i].id] ?: "placeholder_${s.id}")
                     Song(
-                        id          = s.id.toLongOrNull() ?: -1L,
+                        id          = i.toLong() + 1,
                         title       = s.title,
                         artist      = s.artist,
                         album       = s.album,
@@ -340,25 +342,32 @@ class OnlineSearchViewModel @Inject constructor(
     private fun resolveNextUrl(index: Int) {
         val song = playerController.onlineSongs.getOrNull(index) ?: return
         val songId = song.id
-        // 如果已缓存则跳过
-        if (playerController.urlCache.containsKey(songId)) return
+        // URL 已缓存则跳过 URL 解析，但歌词仍需检查
+        val urlCached = playerController.urlCache.containsKey(songId)
         viewModelScope.launch {
             try {
-                val url = repository.resolvePlayUrl(apiBase, song, AudioQuality.Standard)
-                if (!url.isNullOrBlank()) {
-                    playerController.urlCache[songId] = url
-                    playerController.updateMediaItemUrl(index, url)
+                // 解析 URL（如果未缓存）
+                if (!urlCached) {
+                    val url = repository.resolvePlayUrl(apiBase, song, AudioQuality.Standard)
+                    if (!url.isNullOrBlank()) {
+                        playerController.urlCache[songId] = url
+                        // forceResume=true：如果之前因 placeholder 暂停了，解析完成后恢复播放
+                        playerController.updateMediaItemUrl(index, url, forceResume = true)
+                    }
                 }
-                // 获取歌词
-                val lrc = try { repository.fetchLyric(song) } catch (_: Exception) { "" }
-                val longId = songId.toLongOrNull() ?: -1L
-                if (lrc.isNotBlank()) {
-                    playerController.songLrcMap[longId] = lrc
+                // 始终检查并获取歌词（随机播放时可能跳很远）
+                if (!playerController.songLrcMap.containsKey(songId)) {
+                    val lrc = try { repository.fetchLyric(song) } catch (_: Exception) { "" }
+                    if (lrc.isNotBlank()) {
+                        playerController.songLrcMap[songId] = lrc
+                        // 如果是当前歌曲，立即更新歌词显示
+                        if (playerController.currentSong.value?.id?.toString() == songId) {
+                            playerController.updateOnlineLrcText(lrc)
+                        }
+                    }
                 }
             } catch (_: Exception) {}
         }
-        // 预取后续几首歌的歌词（后台）
-        prefetchNearbyLyrics(index)
     }
 
     /**
@@ -371,14 +380,13 @@ class OnlineSearchViewModel @Inject constructor(
             val idx = currentIndex + i
             if (idx >= songs.size) break
             val song = songs[idx]
-            val songId = song.id.toLongOrNull() ?: -1L
             // 已有歌词则跳过
-            if (playerController.songLrcMap.containsKey(songId)) continue
+            if (playerController.songLrcMap.containsKey(song.id)) continue
             viewModelScope.launch {
                 try {
                     val lrc = repository.fetchLyric(song)
                     if (lrc.isNotBlank()) {
-                        playerController.songLrcMap[songId] = lrc
+                        playerController.songLrcMap[song.id] = lrc
                     }
                 } catch (_: Exception) {}
             }
@@ -406,22 +414,16 @@ class OnlineSearchViewModel @Inject constructor(
                     updateDownloadState(song.id, DownloadState.Error("该音质暂时不可用"))
                     return@launch
                 }
-                val lrcText = repository.fetchLyric(song)
-                val inputData = workDataOf(
-                    "title"    to song.title,
-                    "artist"   to song.artist,
-                    "playUrl"  to playUrl,
-                    "coverUrl" to song.coverUrl,
-                    "lrcText"  to lrcText
-                )
-                WorkManager.getInstance(app).enqueue(
-                    OneTimeWorkRequestBuilder<MusicDownloadWorker>()
-                        .setInputData(inputData)
-                        .setConstraints(
-                            Constraints.Builder()
-                                .setRequiredNetworkType(NetworkType.CONNECTED)
-                                .build()
-                        ).build()
+                val lrcText = try { repository.fetchLyric(song) } catch (_: Exception) { "" }
+                downloadManager.enqueue(
+                    com.yulight.skypie.data.model.DownloadTask(
+                        id = song.id,
+                        title = song.title,
+                        artist = song.artist,
+                        coverUrl = song.coverUrl,
+                        streamUrl = playUrl,
+                        lrcText = lrcText
+                    )
                 )
                 updateDownloadState(song.id, DownloadState.Done)
                 onQueued()

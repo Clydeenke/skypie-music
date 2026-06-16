@@ -1,5 +1,11 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.yulight.skypie.ui.components
 
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
@@ -43,6 +49,70 @@ import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import kotlin.math.cos
+import kotlin.math.sin
+
+/**
+ * 陀螺仪3D封面 - 角速度累加 + 阻尼模式
+ *
+ * 使用 TYPE_GYROSCOPE 获取角速度，每帧累加角度变化量。
+ * 接近极限时施加阻尼，让用户感受到"阻力"而非硬停。
+ */
+@Composable
+fun rememberGyroscopeState(): Pair<Float, Float> {
+    val context = LocalContext.current
+    val maxAngle = 12f  // 最大角度
+
+    var angleX by remember { mutableFloatStateOf(0f) }
+    var angleY by remember { mutableFloatStateOf(0f) }
+    var lastTimestamp by remember { mutableLongStateOf(0L) }
+
+    DisposableEffect(Unit) {
+        val sensorManager = context.getSystemService(SensorManager::class.java)
+        val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val currentTime = event.timestamp
+                if (lastTimestamp == 0L) {
+                    lastTimestamp = currentTime
+                    return
+                }
+
+                val deltaTime = (currentTime - lastTimestamp) / 1_000_000_000f
+                lastTimestamp = currentTime
+                if (deltaTime > 0.1f) return
+
+                // 角速度 × 时间 = 角度变化量（取反方向）
+                val rawDeltaX = -Math.toDegrees(event.values[1].toDouble() * deltaTime).toFloat()
+                val rawDeltaY = -Math.toDegrees(event.values[0].toDouble() * deltaTime).toFloat()
+
+                // 阻尼：只在接近极限且继续推进时生效，往回动时不阻尼
+                val ratioX = (kotlin.math.abs(angleX) / maxAngle).coerceIn(0f, 1f)
+                val ratioY = (kotlin.math.abs(angleY) / maxAngle).coerceIn(0f, 1f)
+                // 判断是否在推进（角度和增量同方向）
+                val pushingX = (angleX > 0 && rawDeltaX > 0) || (angleX < 0 && rawDeltaX < 0)
+                val pushingY = (angleY > 0 && rawDeltaY > 0) || (angleY < 0 && rawDeltaY < 0)
+                // 推进时阻尼，往回时无阻尼
+                val dampingX = if (pushingX) 1f - ratioX * ratioX else 1f
+                val dampingY = if (pushingY) 1f - ratioY * ratioY else 1f
+
+                angleX = (angleX + rawDeltaX * dampingX).coerceIn(-maxAngle, maxAngle)
+                angleY = (angleY + rawDeltaY * dampingY).coerceIn(-maxAngle, maxAngle)
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+
+        sensorManager?.registerListener(listener, gyroscope, SensorManager.SENSOR_DELAY_UI)
+
+        onDispose {
+            sensorManager?.unregisterListener(listener)
+        }
+    }
+
+    return angleX to angleY
+}
 
 @Composable
 internal fun FullPlayer(
@@ -57,17 +127,32 @@ internal fun FullPlayer(
     val controller    = viewModel.playerController
     val song          by controller.currentSong.collectAsStateWithLifecycle()
     val isPlaying     by controller.isPlaying.collectAsStateWithLifecycle()
-    val repeatMode    by controller.repeatMode.collectAsStateWithLifecycle()
+    val playMode      by controller.playMode.collectAsStateWithLifecycle()
     val scope         = rememberCoroutineScope()
     val controllerRef by rememberUpdatedState(controller)
+
+    // 读取 3D 封面设置
+    val context = LocalContext.current
+    val enable3DCover = remember {
+        context.getSharedPreferences("skypie_settings", 0).getBoolean("enable_3d_cover", true)
+    }
+    val (rawTiltX, rawTiltY) = rememberGyroscopeState()
+    val tiltX = if (enable3DCover) rawTiltX else 0f
+    val tiltY = if (enable3DCover) rawTiltY else 0f
 
     var currentMs   by remember { mutableLongStateOf(0L) }
     var durationMs  by remember { mutableLongStateOf(1L) }
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubProg   by remember { mutableFloatStateOf(0f) }
+    var lastSongId  by remember { mutableStateOf(song?.id) }
 
     LaunchedEffect(Unit) {
         while (isActive) {
+            // 检测切歌，立即重置
+            if (song?.id != lastSongId) {
+                lastSongId = song?.id
+                currentMs = 0L
+            }
             if (!isScrubbing) {
                 currentMs  = controllerRef.getCurrentPosition()
                 durationMs = controllerRef.getDuration().coerceAtLeast(1L)
@@ -82,18 +167,26 @@ internal fun FullPlayer(
 
     LaunchedEffect(song?.id) {
         val t = controller.getCurrentIndex().coerceIn(0, pagerState.pageCount - 1)
-        if (pagerState.currentPage != t) pagerState.scrollToPage(t)
+        if (pagerState.currentPage != t) {
+            pagerState.animateScrollToPage(
+                page = t,
+                animationSpec = tween(350, easing = FastOutSlowInEasing)
+            )
+        }
     }
-    LaunchedEffect(pagerState.currentPage, pagerState.isScrollInProgress) {
+
+    // 滑动切歌：停下后识别停在哪首歌，直接播放它
+    LaunchedEffect(pagerState.isScrollInProgress) {
         if (!pagerState.isScrollInProgress && pagerState.pageCount > 0) {
             val idx = pagerState.currentPage
-            if (idx != controller.getCurrentIndex()) controller.playAtIndex(idx)
+            if (idx != controller.getCurrentIndex()) {
+                controller.playAtIndex(idx)
+            }
         }
     }
 
     val displaySong = controller.getSongAt(pagerState.currentPage) ?: song
     val onBg        = Color.White
-    val context     = LocalContext.current
 
     // ── 收藏 ──────────────────────────────────────────────────────────────────
     var isFavorite by remember(displaySong?.id) {
@@ -148,9 +241,13 @@ internal fun FullPlayer(
         }
     }
 
-    val currentLrcIdx = remember(currentMs, lrcLines) {
+    val currentLrcIdx = remember(currentMs, lrcLines, displaySong?.id) {
         if (lrcLines.isEmpty()) -1
-        else lrcLines.indexOfLast { it.timeMs <= currentMs }.let { if (it < 0) 0 else it }
+        else {
+            // 切歌时 currentMs 可能还是旧值，先找最接近 0 的歌词行
+            val idx = lrcLines.indexOfLast { it.timeMs <= currentMs }
+            if (idx < 0) 0 else idx
+        }
     }
 
     val fadeAlpha = Modifier.graphicsLayer {
@@ -196,7 +293,32 @@ internal fun FullPlayer(
                         modifier           = Modifier
                             .fillMaxWidth(0.88f)
                             .aspectRatio(1f)
-                            .graphicsLayer { clip = true; shape = RoundedCornerShape(22.dp) }
+                            .graphicsLayer {
+                                // 3D 倾斜效果
+                                rotationX = tiltY  // 上下倾斜
+                                rotationY = -tiltX // 左右倾斜
+                                cameraDistance = 12f * density
+                                // 边缘圆角
+                                clip = true
+                                shape = RoundedCornerShape(22.dp)
+                            }
+                            .drawWithContent {
+                                drawContent()
+                                // 光影效果：根据倾斜角度绘制高光，覆盖整个封面
+                                val lightX = size.width * (0.5f + tiltX / 30f)
+                                val lightY = size.height * (0.4f - tiltY / 30f)
+                                drawRect(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.2f),
+                                            Color.White.copy(alpha = 0.05f),
+                                            Color.Transparent
+                                        ),
+                                        center = Offset(lightX, lightY),
+                                        radius = size.width * 0.9f
+                                    )
+                                )
+                            }
                     )
                 }
             }
@@ -246,6 +368,12 @@ internal fun FullPlayer(
         // ── 歌词预览条 ─────────────────────────────────────────────────────────
         val lrcLineHeightDp = 24.dp
         val lrcListState    = rememberLazyListState()
+
+        // 切歌时重置歌词滚动位置到顶部
+        LaunchedEffect(displaySong?.id) {
+            lrcListState.scrollToItem(0)
+        }
+
         LaunchedEffect(currentLrcIdx) {
             if (currentLrcIdx >= 0 && lrcLines.isNotEmpty())
                 lrcListState.animateScrollToItem(currentLrcIdx.coerceAtLeast(0))
@@ -321,15 +449,19 @@ internal fun FullPlayer(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { controller.toggleRepeat() }, Modifier.size(48.dp)) {
+            IconButton(onClick = { controller.togglePlayMode() }, Modifier.size(48.dp)) {
                 Icon(
-                    imageVector        = when (repeatMode) { Player.REPEAT_MODE_ONE -> Icons.Rounded.RepeatOne; else -> Icons.Rounded.Repeat },
+                    imageVector = when (playMode) {
+                        1 -> Icons.Rounded.RepeatOne      // 单曲循环
+                        2 -> Icons.Rounded.Shuffle         // 随机播放
+                        else -> Icons.Rounded.Repeat       // 循环全部
+                    },
                     contentDescription = null,
-                    modifier           = Modifier.size(24.dp),
-                    tint               = if (repeatMode != Player.REPEAT_MODE_OFF) onBg else onBg.copy(alpha = 0.35f)
+                    modifier = Modifier.size(24.dp),
+                    tint = if (playMode != 0) onBg else onBg.copy(alpha = 0.35f)
                 )
             }
-            IconButton(onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage - 1).coerceAtLeast(0)) } }, Modifier.size(56.dp)) {
+            IconButton(onClick = { controller.skipToPrevious() }, Modifier.size(56.dp)) {
                 Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(36.dp), tint = onBg)
             }
             FilledIconButton(
@@ -340,7 +472,7 @@ internal fun FullPlayer(
             ) {
                 Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(36.dp), tint = Color(0xFF1A1A1A))
             }
-            IconButton(onClick = { scope.launch { pagerState.animateScrollToPage((pagerState.currentPage + 1).coerceAtMost(pagerState.pageCount - 1)) } }, Modifier.size(56.dp)) {
+            IconButton(onClick = { controller.skipToNext() }, Modifier.size(56.dp)) {
                 Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp), tint = onBg)
             }
             IconButton(onClick = { scope.launch { lyricsSlide.animateTo(screenHPx, tween(550, easing = EaseInOutCubic)) } }, Modifier.size(48.dp)) {

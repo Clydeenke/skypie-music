@@ -12,6 +12,7 @@ import com.yulight.skypie.domain.model.Playlist
 import com.yulight.skypie.domain.model.ScanFolder
 import com.yulight.skypie.domain.model.ScanLog
 import com.yulight.skypie.domain.model.Song
+import com.yulight.skypie.service.DownloadManager
 import com.yulight.skypie.service.PlayerController
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -43,11 +44,17 @@ class MusicViewModel @Inject constructor(
     private val repository       : MusicRepository,
     private val playlistRepository: PlaylistRepository,  // 歌单仓库
     val playerController         : PlayerController,
-    val lyricsPrefs               : DesktopLyricsPrefs
+    val lyricsPrefs               : DesktopLyricsPrefs,
+    private val downloadManager  : DownloadManager
 ) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_PLAYER, 0)
     private val app   = application
+
+    init {
+        // 设置下载完成回调，自动刷新音乐库
+        downloadManager.onDownloadComplete = { refresh() }
+    }
 
     // ── 打开全屏播放器事件 ────────────────────────────────────────────────────
     private val _openPlayerEvent = MutableStateFlow(false)

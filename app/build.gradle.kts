@@ -6,6 +6,14 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// 从 local.properties 读取 DEFAULT_API_URL
+import java.util.Properties
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
+}
+
 kotlin {
     compilerOptions {
         freeCompilerArgs.addAll(
@@ -27,8 +35,11 @@ android {
         applicationId = "com.yulight.skypie"
         minSdk = 29
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.3.0-beta3"
+        versionCode = 12
+        versionName = "1.3.0"
+
+        // 从 local.properties 读取默认 API 地址
+        buildConfigField("String", "DEFAULT_API_URL", "\"${localProperties.getProperty("DEFAULT_API_URL", "")}\"")
     }
 
     buildTypes {
@@ -51,7 +62,10 @@ android {
             freeCompilerArgs.addAll("-opt-in=androidx.compose.animation.ExperimentalAnimationApi")
         }
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
 
     //打包时排除 JAudioTagger 带的多余文件，避免冲突
     packaging {

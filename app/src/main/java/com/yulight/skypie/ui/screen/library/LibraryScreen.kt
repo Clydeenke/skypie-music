@@ -134,6 +134,7 @@ fun LibraryScreen(
     onSongClick           : (songs: List<Song>, index: Int) -> Unit,
     onOpenPlayer          : () -> Unit    = {},
     onOpenOnlineSearch    : () -> Unit    = {},
+    onOpenDownload        : () -> Unit    = {},
     onNavigateToSettings  : () -> Unit    = {},
     onNavigateToAlbums    : () -> Unit    = {},
     onNavigateToArtists   : () -> Unit    = {},
@@ -244,6 +245,7 @@ fun LibraryScreen(
             onNavigateToArtists= { isDrawerOpen = false; onNavigateToArtists() },
             onNavigateToPlaylists = { isDrawerOpen = false; onNavigateToPlaylists() },
             onOpenOnlineSearch = { isLocalExpanded = false; isDrawerOpen = false; onOpenOnlineSearch() },
+            onOpenDownload     = { isDrawerOpen = false; onOpenDownload() },
             onNavigateToSettings = { isDrawerOpen = false; onNavigateToSettings() }
         )
 
@@ -977,6 +979,7 @@ private fun DrawerContent(
     onNavigateToArtists  : () -> Unit,
     onNavigateToPlaylists: () -> Unit,
     onOpenOnlineSearch   : () -> Unit,
+    onOpenDownload       : () -> Unit,
     onNavigateToSettings : () -> Unit,
 ) {
     Column(
@@ -1022,6 +1025,8 @@ private fun DrawerContent(
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
         Spacer(Modifier.height(8.dp))
         DrawerMenuItem(Icons.Rounded.CloudQueue, "云端", onOpenOnlineSearch)
+        Spacer(Modifier.height(4.dp))
+        DrawerMenuItem(Icons.Rounded.Menu, "下载", onOpenDownload)
         Spacer(Modifier.height(4.dp))
         DrawerMenuItem(Icons.Rounded.Settings,  "设置", onNavigateToSettings)
     }
