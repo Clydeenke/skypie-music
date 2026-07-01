@@ -12,4 +12,6 @@ data class Song(
     val dateAdded   : Long,
     val folderPath  : String,
     val filePath    : String = ""
-)
+) {
+    override fun toString(): String = "$title - $artist"
+}

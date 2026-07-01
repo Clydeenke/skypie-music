@@ -77,7 +77,7 @@ class OnlineMusicApi @Inject constructor() {
                 val cover = when {
                     picShort.startsWith("http") -> picShort
                     picShort.isNotBlank()        ->
-                        "https://img2.kuwo.cn/star/albumcover/${picShort.replaceFirst(Regex("^\\d+/"), "800/")}"
+                        "https://img2.kuwo.cn/star/albumcover/${picShort.replaceFirst(Regex("^\\d+/"), "1200/")}"
                     else -> ""
                 }
                 OnlineSong(
@@ -137,7 +137,7 @@ class OnlineMusicApi @Inject constructor() {
                 val item     = list.getJSONObject(i)
                 val rawTitle = item.optString("SongName").ifBlank { return@mapNotNull null }
                 val hash     = item.optString("FileHash").ifBlank { return@mapNotNull null }
-                val cover    = item.optString("Image").replace("{size}", "480")
+                val cover    = item.optString("Image").replace("{size}", "800")
                 val singerRaw = item.optString("SingerName")
                 val (title, artist) = when {
                     singerRaw.isNotBlank()   -> rawTitle to singerRaw

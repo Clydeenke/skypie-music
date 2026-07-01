@@ -1,16 +1,18 @@
 package com.yulight.skypie
 
-import androidx.activity.compose.PredictiveBackHandler
+import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,19 +21,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavHostController
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
+import androidx.lifecycle.viewmodel.navigation3.rememberViewModelStoreNavEntryDecorator
+import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.runtime.rememberNavBackStack
+import androidx.navigation3.ui.NavDisplay
+import androidx.navigation3.runtime.SaveableStateHolderNavEntryDecorator
 import com.yulight.skypie.ui.components.SharedPlayerContainer
 import com.yulight.skypie.ui.screen.download.DownloadScreen
 import com.yulight.skypie.ui.screen.folders.FolderScreen
@@ -46,35 +48,25 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.serialization.Serializable
+
+// 路由定义
+@Serializable object Library : NavKey
+@Serializable object Settings : NavKey
+@Serializable object About : NavKey
+@Serializable object Folder : NavKey
+@Serializable object Online : NavKey
+@Serializable object Download : NavKey
+@Serializable object Playlists : NavKey
+@Serializable data class PlaylistDetail(val playlistId: Long) : NavKey
 
 @Composable
 fun MainNavigation() {
     val viewModel   : MusicViewModel = hiltViewModel()
     val currentSong by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
-    val navController = rememberNavController()
+    val backStack = rememberNavBackStack(Library)
 
     val openPlayerEvent by viewModel.openPlayerEvent.collectAsStateWithLifecycle()
-
-    // Predictive Back 进度状态
-    var backProgress by remember { mutableFloatStateOf(0f) }
-    var isBackGestureActive by remember { mutableStateOf(false) }
-
-    // 系统 Predictive Back 手势
-    PredictiveBackHandler(enabled = true) { progress ->
-        isBackGestureActive = true
-        try {
-            progress.collect { event ->
-                backProgress = event.progress
-            }
-            // 手势完成，执行返回
-            navController.popBackStack()
-        } catch (_: Exception) {
-            // 手势取消
-        } finally {
-            isBackGestureActive = false
-            backProgress = 0f
-        }
-    }
 
     LaunchedEffect(Unit) {
         while (isActive) {
@@ -87,13 +79,80 @@ fun MainNavigation() {
         val hazeState = rememberHazeState()
         Box(modifier = Modifier.fillMaxSize()) {
 
-            // NavHost + Predictive Back 动画
-            PredictiveBackNavHost(
-                navController = navController,
-                viewModel = viewModel,
-                hazeState = hazeState,
-                backProgress = backProgress,
-                isBackGestureActive = isBackGestureActive
+            // NavDisplay + Predictive Back
+            NavDisplay(
+                backStack = backStack,
+                onBack = { backStack.removeLastOrNull() },
+                transitionSpec = {
+                    (slideInHorizontally { it } + fadeIn(tween(300))) togetherWith
+                    (slideOutHorizontally { -it / 4 } + fadeOut(tween(300)))
+                },
+                popTransitionSpec = {
+                    (slideInHorizontally { -it / 4 } + fadeIn(tween(300))) togetherWith
+                    (slideOutHorizontally { it } + fadeOut(tween(300)))
+                },
+                predictivePopTransitionSpec = {
+                    (slideInHorizontally { -it / 4 } + fadeIn(tween(250))) togetherWith
+                    (slideOutHorizontally { it } + fadeOut(tween(250)))
+                },
+                entryDecorators = listOf(
+                    SaveableStateHolderNavEntryDecorator(rememberSaveableStateHolder()),
+                    rememberViewModelStoreNavEntryDecorator()
+                ),
+                entryProvider = entryProvider {
+                    entry<Library> {
+                        LibraryScreen(
+                            viewModel             = viewModel,
+                            onSongClick           = { songs, index -> viewModel.playSong(songs, index) },
+                            onOpenPlayer          = { viewModel.requestOpenPlayer() },
+                            onOpenOnlineSearch    = { backStack.add(Online) },
+                            onOpenDownload        = { backStack.add(Download) },
+                            onNavigateToSettings  = { backStack.add(Settings) },
+                            onNavigateToPlaylists = { backStack.add(Playlists) },
+                            onRefresh             = { viewModel.refresh() },
+                            hazeState             = hazeState,
+                        )
+                    }
+                    entry<Settings> {
+                        SettingsScreen(
+                            viewModel     = viewModel,
+                            onBack        = { backStack.removeLastOrNull() },
+                            onOpenFolders = { backStack.add(Folder) },
+                            onOpenAbout   = { backStack.add(About) }
+                        )
+                    }
+                    entry<About> {
+                        AboutScreen(onBack = { backStack.removeLastOrNull() })
+                    }
+                    entry<Folder> {
+                        FolderScreen(viewModel = viewModel, onBack = { backStack.removeLastOrNull() })
+                    }
+                    entry<Online> {
+                        OnlineSearchScreen(
+                            onBack             = { backStack.removeLastOrNull() },
+                            onDownloadComplete = { viewModel.refresh() },
+                            onOpenPlayer       = { viewModel.requestOpenPlayer() }
+                        )
+                    }
+                    entry<Download> {
+                        DownloadScreen(onBack = { backStack.removeLastOrNull() })
+                    }
+                    entry<Playlists> {
+                        PlaylistListScreen(
+                            viewModel      = viewModel,
+                            onBack         = { backStack.removeLastOrNull() },
+                            onOpenPlaylist = { id -> backStack.add(PlaylistDetail(id)) }
+                        )
+                    }
+                    entry<PlaylistDetail> { key ->
+                        PlaylistDetailScreen(
+                            playlistId = key.playlistId,
+                            viewModel  = viewModel,
+                            onBack     = { backStack.removeLastOrNull() }
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxSize().hazeSource(state = hazeState)
             )
 
             AnimatedVisibility(
@@ -110,128 +169,6 @@ fun MainNavigation() {
                     modifier            = Modifier.fillMaxSize()
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun PredictiveBackNavHost(
-    navController: NavHostController,
-    viewModel: MusicViewModel,
-    hazeState: dev.chrisbanes.haze.HazeState,
-    backProgress: Float,
-    isBackGestureActive: Boolean
-) {
-    // 计算动画值
-    val currentScale by animateFloatAsState(
-        targetValue = if (isBackGestureActive) 1f - backProgress * 0.05f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "currentScale"
-    )
-    val currentTranslationX by animateFloatAsState(
-        targetValue = if (isBackGestureActive) backProgress * 100f else 0f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "currentTranslationX"
-    )
-    val previousScale by animateFloatAsState(
-        targetValue = if (isBackGestureActive) 0.95f + backProgress * 0.05f else 0.95f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "previousScale"
-    )
-    val previousTranslationX by animateFloatAsState(
-        targetValue = if (isBackGestureActive) -30f * (1f - backProgress) else -30f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "previousTranslationX"
-    )
-    val scrimAlpha by animateFloatAsState(
-        targetValue = if (isBackGestureActive) backProgress * 0.3f else 0f,
-        animationSpec = tween(200),
-        label = "scrimAlpha"
-    )
-
-    NavHost(
-        navController = navController,
-        startDestination = "library",
-        modifier = Modifier.fillMaxSize().hazeSource(state = hazeState),
-        enterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeIn(tween(200))
-        },
-        exitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { -it / 4 },
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeOut(tween(150))
-        },
-        popEnterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { -it / 4 },
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeIn(tween(200))
-        },
-        popExitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)
-            ) + fadeOut(tween(150))
-        }
-    ) {
-        composable("library") {
-            LibraryScreen(
-                viewModel             = viewModel,
-                onSongClick           = { songs, index -> viewModel.playSong(songs, index) },
-                onOpenPlayer          = { viewModel.requestOpenPlayer() },
-                onOpenOnlineSearch    = { navController.navigate("online") },
-                onOpenDownload        = { navController.navigate("download") },
-                onNavigateToSettings  = { navController.navigate("settings") },
-                onNavigateToPlaylists = { navController.navigate("playlists") },
-                onRefresh             = { viewModel.refresh() },
-                hazeState             = hazeState,
-            )
-        }
-        composable("settings") {
-            SettingsScreen(
-                viewModel     = viewModel,
-                onBack        = { navController.popBackStack() },
-                onOpenFolders = { navController.navigate("folder") },
-                onOpenAbout   = { navController.navigate("about") }
-            )
-        }
-        composable("about") {
-            AboutScreen(onBack = { navController.popBackStack() })
-        }
-        composable("folder") {
-            FolderScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
-        }
-        composable("online") {
-            OnlineSearchScreen(
-                onBack             = { navController.popBackStack() },
-                onDownloadComplete = { viewModel.refresh() },
-                onOpenPlayer       = { viewModel.requestOpenPlayer() }
-            )
-        }
-        composable("download") {
-            DownloadScreen(onBack = { navController.popBackStack() })
-        }
-        composable("playlists") {
-            PlaylistListScreen(
-                viewModel      = viewModel,
-                onBack         = { navController.popBackStack() },
-                onOpenPlaylist = { id -> navController.navigate("playlist/$id") }
-            )
-        }
-        composable(
-            route = "playlist/{playlistId}",
-            arguments = listOf(navArgument("playlistId") { type = NavType.LongType })
-        ) { backStackEntry ->
-            val playlistId = backStackEntry.arguments?.getLong("playlistId") ?: 0L
-            PlaylistDetailScreen(
-                playlistId = playlistId,
-                viewModel  = viewModel,
-                onBack     = { navController.popBackStack() }
-            )
         }
     }
 }

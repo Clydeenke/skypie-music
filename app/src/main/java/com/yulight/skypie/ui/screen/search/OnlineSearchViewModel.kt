@@ -3,6 +3,7 @@ package com.yulight.skypie.ui.screen.search
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.util.UnstableApi
 import com.yulight.skypie.BuildConfig
 import com.yulight.skypie.data.remote.AudioQuality
 import com.yulight.skypie.data.remote.DownloadState
@@ -23,8 +24,9 @@ import javax.inject.Inject
 
 private const val PREFS_SETTINGS = "skypie_settings"
 private const val KEY_API_URL    = "api_url"
+private const val KEY_PLAY_QUALITY = "play_quality"
 
-@OptIn(FlowPreview::class)
+@OptIn(FlowPreview::class, UnstableApi::class)
 @HiltViewModel
 class OnlineSearchViewModel @Inject constructor(
     application            : Application,
@@ -40,6 +42,16 @@ class OnlineSearchViewModel @Inject constructor(
         get() {
             val customUrl = app.getSharedPreferences(PREFS_SETTINGS, 0).getString(KEY_API_URL, "") ?: ""
             return if (customUrl.isNotBlank()) customUrl else BuildConfig.DEFAULT_API_URL
+        }
+
+    private val playQuality: AudioQuality
+        get() {
+            val saved = app.getSharedPreferences(PREFS_SETTINGS, 0).getString(KEY_PLAY_QUALITY, "standard") ?: "standard"
+            return when (saved) {
+                "high" -> AudioQuality.High
+                "lossless" -> AudioQuality.Lossless
+                else -> playQuality
+            }
         }
 
     // ── 搜索 ──────────────────────────────────────────────────────────────────
@@ -265,8 +277,9 @@ class OnlineSearchViewModel @Inject constructor(
         viewModelScope.launch {
             playerController.currentSong.collect { song ->
                 if (song != null && playerController.isOnlineMode.value) {
-                    // 从 onlineSongs 中找到对应的 id
-                    val onlineSong = playerController.onlineSongs.find { it.id.toLongOrNull() == song.id }
+                    // song.id 是索引-based (1, 2, 3...)，按索引匹配
+                    val index = (song.id - 1).toInt()
+                    val onlineSong = playerController.onlineSongs.getOrNull(index)
                     if (onlineSong != null && currentPlayingId != onlineSong.id) {
                         currentPlayingId?.let { updatePlayState(it, PlayState.Idle) }
                         currentPlayingId = onlineSong.id
@@ -292,7 +305,7 @@ class OnlineSearchViewModel @Inject constructor(
             currentPlayingId = song.id
             try {
                 // 只解析点击歌曲的URL
-                val streamUrl = repository.resolvePlayUrl(apiBase, song, AudioQuality.Standard)
+                val streamUrl = repository.resolvePlayUrl(apiBase, song, playQuality)
                 if (streamUrl.isNullOrBlank()) {
                     updatePlayState(song.id, PlayState.Error("获取链接失败"))
                     currentPlayingId = null; return@launch
@@ -348,7 +361,7 @@ class OnlineSearchViewModel @Inject constructor(
             try {
                 // 解析 URL（如果未缓存）
                 if (!urlCached) {
-                    val url = repository.resolvePlayUrl(apiBase, song, AudioQuality.Standard)
+                    val url = repository.resolvePlayUrl(apiBase, song, playQuality)
                     if (!url.isNullOrBlank()) {
                         playerController.urlCache[songId] = url
                         // forceResume=true：如果之前因 placeholder 暂停了，解析完成后恢复播放
@@ -366,6 +379,8 @@ class OnlineSearchViewModel @Inject constructor(
                         }
                     }
                 }
+                // 预取附近歌曲的歌词
+                prefetchNearbyLyrics(index)
             } catch (_: Exception) {}
         }
     }

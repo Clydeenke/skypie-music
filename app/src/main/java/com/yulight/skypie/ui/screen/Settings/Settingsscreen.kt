@@ -40,6 +40,15 @@ import com.yulight.skypie.viewmodel.MusicViewModel
 private const val PREFS_NAME = "skypie_settings"
 private const val KEY_API_URL = "api_url"
 private const val KEY_3D_COVER = "enable_3d_cover"
+private const val KEY_DOWNLOAD_DIR = "download_dir"
+private const val KEY_PLAY_QUALITY = "play_quality"
+const val DEFAULT_DOWNLOAD_DIR = "SkypieMusic"
+
+private val qualityOptions = listOf(
+    "standard" to "标准音质 (128k)",
+    "high"     to "高品质 (320k)",
+    "lossless" to "无损音质 (FLAC)",
+)
 
 @Composable
 fun SettingsScreen(
@@ -59,6 +68,21 @@ fun SettingsScreen(
     var showCleanOldDialog by remember { mutableStateOf(false) }
     var showPermDialog by remember { mutableStateOf(false) }
     var enable3DCover by remember { mutableStateOf(prefs.getBoolean(KEY_3D_COVER, true)) }
+    var downloadDir by remember { mutableStateOf(prefs.getString(KEY_DOWNLOAD_DIR, DEFAULT_DOWNLOAD_DIR) ?: DEFAULT_DOWNLOAD_DIR) }
+    var playQuality by remember { mutableStateOf(prefs.getString(KEY_PLAY_QUALITY, "standard") ?: "standard") }
+
+    val folderPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        uri?.lastPathSegment?.let { path ->
+            val folderName = path.substringAfterLast(':').substringAfterLast('/')
+            if (folderName.isNotBlank()) {
+                downloadDir = folderName
+                prefs.edit().putString(KEY_DOWNLOAD_DIR, folderName).apply()
+            }
+        }
+    }
+
     val themeIndexState = LocalThemeIndex.current
     var themeColorIndex by themeIndexState
     var showThemeColors by remember { mutableStateOf(false) }
@@ -123,6 +147,43 @@ fun SettingsScreen(
                 SettingsGroupLabel("在线音源")
                 SettingsCard {
                     SettingsItem(Icons.Rounded.Language, "API 接口地址", if (apiUrl.isNotBlank()) "自定义API地址" else "未设置，点击输入") { apiInput = apiUrl; showApiDialog = true }
+                    HorizontalDivider(modifier = Modifier.padding(start = 52.dp), thickness = 0.5.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { folderPickerLauncher.launch(null) }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.FolderOpen, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("下载目录", style = MaterialTheme.typography.bodyLarge)
+                            Text("Music/$downloadDir", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                        Icon(Icons.Rounded.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), modifier = Modifier.size(20.dp))
+                    }
+                    HorizontalDivider(modifier = Modifier.padding(start = 52.dp), thickness = 0.5.dp)
+                    // ── 云端播放音质 ──
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                val currentIndex = qualityOptions.indexOfFirst { it.first == playQuality }.coerceAtLeast(0)
+                                val nextIndex = (currentIndex + 1) % qualityOptions.size
+                                playQuality = qualityOptions[nextIndex].first
+                                prefs.edit().putString(KEY_PLAY_QUALITY, playQuality).apply()
+                            }
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.HighQuality, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                        Spacer(Modifier.width(14.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("云端播放音质", style = MaterialTheme.typography.bodyLarge)
+                            Text(qualityOptions.firstOrNull { it.first == playQuality }?.second ?: "标准音质", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        }
+                    }
                 }
 
                 Spacer(Modifier.height(24.dp))

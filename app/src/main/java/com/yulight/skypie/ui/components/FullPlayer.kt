@@ -60,7 +60,7 @@ import kotlin.math.sin
  * 接近极限时施加阻尼，让用户感受到"阻力"而非硬停。
  */
 @Composable
-fun rememberGyroscopeState(): Pair<Float, Float> {
+fun rememberGyroscopeState(enabled: Boolean = true): Pair<Float, Float> {
     val context = LocalContext.current
     val maxAngle = 12f  // 最大角度
 
@@ -68,7 +68,9 @@ fun rememberGyroscopeState(): Pair<Float, Float> {
     var angleY by remember { mutableFloatStateOf(0f) }
     var lastTimestamp by remember { mutableLongStateOf(0L) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(enabled) {
+        if (!enabled) return@DisposableEffect onDispose { }
+
         val sensorManager = context.getSystemService(SensorManager::class.java)
         val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
 
@@ -84,17 +86,13 @@ fun rememberGyroscopeState(): Pair<Float, Float> {
                 lastTimestamp = currentTime
                 if (deltaTime > 0.1f) return
 
-                // 角速度 × 时间 = 角度变化量（取反方向）
                 val rawDeltaX = -Math.toDegrees(event.values[1].toDouble() * deltaTime).toFloat()
                 val rawDeltaY = -Math.toDegrees(event.values[0].toDouble() * deltaTime).toFloat()
 
-                // 阻尼：只在接近极限且继续推进时生效，往回动时不阻尼
                 val ratioX = (kotlin.math.abs(angleX) / maxAngle).coerceIn(0f, 1f)
                 val ratioY = (kotlin.math.abs(angleY) / maxAngle).coerceIn(0f, 1f)
-                // 判断是否在推进（角度和增量同方向）
                 val pushingX = (angleX > 0 && rawDeltaX > 0) || (angleX < 0 && rawDeltaX < 0)
                 val pushingY = (angleY > 0 && rawDeltaY > 0) || (angleY < 0 && rawDeltaY < 0)
-                // 推进时阻尼，往回时无阻尼
                 val dampingX = if (pushingX) 1f - ratioX * ratioX else 1f
                 val dampingY = if (pushingY) 1f - ratioY * ratioY else 1f
 
@@ -122,6 +120,7 @@ internal fun FullPlayer(
     lyricsSlide : Animatable<Float, *>,
     screenHPx   : Float,
     onCollapse  : () -> Unit,
+    onQueueClick: () -> Unit = {},
     modifier    : Modifier = Modifier
 ) {
     val controller    = viewModel.playerController
@@ -136,7 +135,7 @@ internal fun FullPlayer(
     val enable3DCover = remember {
         context.getSharedPreferences("skypie_settings", 0).getBoolean("enable_3d_cover", true)
     }
-    val (rawTiltX, rawTiltY) = rememberGyroscopeState()
+    val (rawTiltX, rawTiltY) = rememberGyroscopeState(enabled = enable3DCover)
     val tiltX = if (enable3DCover) rawTiltX else 0f
     val tiltY = if (enable3DCover) rawTiltY else 0f
 
@@ -206,10 +205,12 @@ internal fun FullPlayer(
             val title     = s.title.replace(Regex("[/\\\\:*?\"<>|]"), "_")
             val artist    = s.artist.replace(Regex("[/\\\\:*?\"<>|]"), "_")
             isDownloading = true
+            val prefs = context.getSharedPreferences("skypie_settings", 0)
+            val downloadDir = prefs.getString("download_dir", com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR) ?: com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR
             val req = android.app.DownloadManager.Request(android.net.Uri.parse(streamUrl)).apply {
                 setTitle(s.title); setDescription(s.artist)
                 setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "skypie/$artist - $title.mp3")
+                setDestinationInExternalPublicDir(android.os.Environment.DIRECTORY_MUSIC, "$downloadDir/$artist - $title.mp3")
                 addRequestHeader("User-Agent", "Mozilla/5.0")
             }
             context.getSystemService(android.app.DownloadManager::class.java).enqueue(req)
@@ -277,47 +278,52 @@ internal fun FullPlayer(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center
             )
-            IconButton(onClick = {}, Modifier.size(48.dp)) {
-                Icon(Icons.Rounded.MoreVert, "更多", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f))
+            IconButton(onClick = onQueueClick, Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.FormatListBulleted, "播放队列", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f))
             }
         }
 
         // ── 封面翻页 ───────────────────────────────────────────────────────────
         Box(Modifier.fillMaxWidth().weight(1f).padding(vertical = FullPagerPad), contentAlignment = Alignment.Center) {
             HorizontalPager(state = pagerState, Modifier.fillMaxSize()) { page ->
+                val isCurrentPage = page == pagerState.currentPage
+                val distance = kotlin.math.abs(page - pagerState.currentPage)
+                val shouldLoad = distance <= 1
+
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     AsyncImage(
-                        model              = controller.getSongAt(page)?.albumArtUri ?: song?.albumArtUri,
+                        model              = if (shouldLoad) controller.getSongAt(page)?.albumArtUri ?: song?.albumArtUri else null,
                         contentDescription = null,
                         contentScale       = ContentScale.Crop,
                         modifier           = Modifier
                             .fillMaxWidth(0.88f)
                             .aspectRatio(1f)
                             .graphicsLayer {
-                                // 3D 倾斜效果
-                                rotationX = tiltY  // 上下倾斜
-                                rotationY = -tiltX // 左右倾斜
-                                cameraDistance = 12f * density
-                                // 边缘圆角
+                                if (isCurrentPage && enable3DCover) {
+                                    rotationX = tiltY
+                                    rotationY = -tiltX
+                                    cameraDistance = 12f * density
+                                }
                                 clip = true
                                 shape = RoundedCornerShape(22.dp)
                             }
                             .drawWithContent {
                                 drawContent()
-                                // 光影效果：根据倾斜角度绘制高光，覆盖整个封面
-                                val lightX = size.width * (0.5f + tiltX / 30f)
-                                val lightY = size.height * (0.4f - tiltY / 30f)
-                                drawRect(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.2f),
-                                            Color.White.copy(alpha = 0.05f),
-                                            Color.Transparent
-                                        ),
-                                        center = Offset(lightX, lightY),
-                                        radius = size.width * 0.9f
+                                if (isCurrentPage && enable3DCover) {
+                                    val lightX = size.width * (0.5f + tiltX / 30f)
+                                    val lightY = size.height * (0.4f - tiltY / 30f)
+                                    drawRect(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = 0.2f),
+                                                Color.White.copy(alpha = 0.05f),
+                                                Color.Transparent
+                                            ),
+                                            center = Offset(lightX, lightY),
+                                            radius = size.width * 0.9f
+                                        )
                                     )
-                                )
+                                }
                             }
                     )
                 }
@@ -368,11 +374,6 @@ internal fun FullPlayer(
         // ── 歌词预览条 ─────────────────────────────────────────────────────────
         val lrcLineHeightDp = 24.dp
         val lrcListState    = rememberLazyListState()
-
-        // 切歌时重置歌词滚动位置到顶部
-        LaunchedEffect(displaySong?.id) {
-            lrcListState.scrollToItem(0)
-        }
 
         LaunchedEffect(currentLrcIdx) {
             if (currentLrcIdx >= 0 && lrcLines.isNotEmpty())

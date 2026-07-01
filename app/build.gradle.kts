@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // 从 local.properties 读取 DEFAULT_API_URL
@@ -33,10 +34,11 @@ android {
 
     defaultConfig {
         applicationId = "com.yulight.skypie"
-        minSdk = 29
+        minSdk = 23
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.3.0"
+        versionCode = 14
+        versionName = "1.3.2"
+        multiDexEnabled = true
 
         // 从 local.properties 读取默认 API 地址
         buildConfigField("String", "DEFAULT_API_URL", "\"${localProperties.getProperty("DEFAULT_API_URL", "")}\"")
@@ -97,6 +99,9 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
+    implementation(libs.lifecycle.viewmodel.navigation3)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.animation)
     implementation("io.github.fletchmckee.liquid:liquid:1.1.1")
@@ -120,6 +125,7 @@ dependencies {
 
     implementation(libs.coil.compose)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.tooling.preview)
@@ -127,4 +133,5 @@ dependencies {
     implementation(libs.haze.materials)
     implementation("androidx.compose.ui:ui-text-google-fonts")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    implementation(libs.reorderable)
 }

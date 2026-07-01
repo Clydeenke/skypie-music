@@ -1,6 +1,7 @@
 package com.yulight.skypie.ui.components
 
 import android.graphics.drawable.BitmapDrawable
+import com.yulight.skypie.ui.components.queue.QueueSheet
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import androidx.compose.animation.animateColorAsState
@@ -103,6 +104,7 @@ fun SharedPlayerContainer(
 
     // 多选模式激活时隐藏迷你播放条（底部操作栏独占空间）
     val isMultiSelectActive by viewModel.isMultiSelectActive.collectAsStateWithLifecycle()
+    var showQueueSheet by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val density = LocalDensity.current
     val scope   = rememberCoroutineScope()
@@ -192,14 +194,15 @@ fun SharedPlayerContainer(
 
         var isPlayerOpen    by remember { mutableStateOf(false) }
         var isBackGesturing by remember { mutableStateOf(false) }
+        var isAnimatingClose by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
             snapshotFlow { animOffset.value }
                 .collect { offset ->
-                    if (!isBackGesturing) {
+                    if (!isBackGesturing && !isAnimatingClose) {
                         isPlayerOpen = offset < dragRange * 0.1f
                     }
                 }
-        }
+            }
 
         LaunchedEffect(Unit) {
             snapshotFlow { animOffset.value > dragRange * 0.95f }
@@ -244,14 +247,14 @@ fun SharedPlayerContainer(
                     }
 
                     lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
-                    else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                               else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
                 }
             }
         }
 
         var currentMsForLyrics by remember { mutableLongStateOf(0L) }
         LaunchedEffect(Unit) {
-            while (isActive) { currentMsForLyrics = viewModel.playerController.getCurrentPosition(); delay(500) }
+            while (isActive) { currentMsForLyrics = viewModel.playerController.getCurrentPosition(); delay(1000) }
         }
 
         val velocityTracker = remember { VelocityTracker() }
@@ -264,24 +267,31 @@ fun SharedPlayerContainer(
             scope.launch { lyricsSlide.animateTo(if (vy < -400f || (vy in -400f..400f && lyricsSlide.value > screenHPx * 0.4f)) screenHPx else 0f, tween(400, easing = SettleEasing)) }
         }
 
-        PredictiveBackHandler(enabled = isLyricsOpen) { progress ->
+        PredictiveBackHandler(enabled = isLyricsOpen && !isAnimatingClose) { progress ->
             try {
                 progress.collect { event -> lyricsSlide.snapTo(screenHPx * (1f - event.progress)) }
+                isAnimatingClose = true
                 lyricsSlide.animateTo(0f, tween(300, easing = SettleEasing))
             } catch (e: CancellationException) {
+                isAnimatingClose = true
                 lyricsSlide.animateTo(screenHPx, tween(300, easing = SettleEasing))
+            } finally {
+                isAnimatingClose = false
             }
         }
 
-        PredictiveBackHandler(enabled = isPlayerOpen && !isLyricsOpen) { progress ->
+        PredictiveBackHandler(enabled = isPlayerOpen && !isLyricsOpen && !isAnimatingClose) { progress ->
             isBackGesturing = true
             try {
                 progress.collect { event -> animOffset.snapTo(dragRange * event.progress) }
+                isAnimatingClose = true
                 animOffset.animateTo(dragRange, tween(300, easing = SettleEasing))
             } catch (e: CancellationException) {
+                isAnimatingClose = true
                 animOffset.animateTo(0f, tween(300, easing = SettleEasing))
             } finally {
                 isBackGesturing = false
+                isAnimatingClose = false
             }
         }
 
@@ -454,6 +464,7 @@ fun SharedPlayerContainer(
                         lyricsSlide = lyricsSlide,
                         screenHPx   = screenHPx,
                         onCollapse  = { scope.launch { animOffset.animateTo(dragRange, tween(400, easing = SettleEasing)) } },
+                        onQueueClick = { showQueueSheet = true },
                         modifier    = Modifier.fillMaxSize()
                     )
                 }
@@ -471,157 +482,17 @@ fun SharedPlayerContainer(
                             translationY = with(density) { 60.dp.toPx() } * sinkFrac
                         }
                 ) {
-                    MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod, hazeState = hazeState)
+                    MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod, hazeState = hazeState, onQueueClick = { showQueueSheet = true })
                 }
             }
         }
     }
-}
 
-@Composable
-fun MiniPlayer(
-    viewModel: MusicViewModel,
-    gestureMod: Modifier = Modifier,
-    hazeState: HazeState
-) {
-    val song by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
-    val isPlaying by viewModel.playerController.isPlaying.collectAsStateWithLifecycle()
-    val s = song ?: return
-    val radius = MiniPlayerHeight / 2
-    val isDark = isSystemInDarkTheme()
-
-    val targetColor = MaterialTheme.colorScheme.primaryContainer
-
-    val dominantColor by animateColorAsState(
-        targetValue = targetColor,
-        animationSpec = tween(800, 0, AppleEasing),
-        label = "ColorTransition"
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(MiniPlayerHeight)
-            .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(radius),
-                spotColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.15f),
-                ambientColor = if (isDark) Color.Transparent else Color.Black.copy(alpha = 0.1f)
-            )
-            .border(
-                width = 0.8.dp,
-                color = if (isDark) Color.White.copy(0.1f) else Color.Black.copy(0.05f),
-                shape = RoundedCornerShape(radius)
-            )
-    ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .clip(RoundedCornerShape(radius))
-                .hazeEffect(
-                    state = hazeState,
-                    style = dev.chrisbanes.haze.HazeStyle(
-                        blurRadius = 12.dp,
-                        noiseFactor = 0.02f,
-                        tints = listOf(
-                            dev.chrisbanes.haze.HazeTint(
-                                color = if (isDark) Color.Transparent
-                                else Color.Black.copy(alpha = 0.02f)
-                            )
-                        )
-                    )
-                )
+    // 播放队列 BottomSheet
+    if (showQueueSheet) {
+        QueueSheet(
+            viewModel = viewModel,
+            onDismiss = { showQueueSheet = false }
         )
-
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .drawBehind {
-                    val h = size.height
-                    val cr = CornerRadius(h / 2f)
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = if (isDark) 0.15f else 0.45f),
-                                Color.Transparent
-                            ),
-                            startY = 0f, endY = h * 0.5f
-                        ),
-                        cornerRadius = cr,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                    )
-                }
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(MiniPlayerHeight)
-                .padding(start = 10.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = gestureMod.weight(1f).height(MiniPlayerHeight),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(
-                        model = s.albumArtUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .shadow(2.dp, RoundedCornerShape(10.dp))
-                    )
-
-                    Spacer(Modifier.width(12.dp))
-
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = s.title,
-                            style = MaterialTheme.typography.titleSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 15.sp
-                            ),
-                            color = if (isDark) Color.White else Color.Black,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = s.artist,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (isDark) Color.White.copy(0.6f) else Color.Black.copy(0.5f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-
-            val iconTint = if (isDark) Color.White else Color.Black
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { viewModel.playerController.skipToPrevious() }, Modifier.size(40.dp)) {
-                    Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(22.dp), tint = iconTint)
-                }
-
-                IconButton(
-                    onClick = { viewModel.playerController.togglePlayPause() },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(30.dp),
-                        tint = iconTint
-                    )
-                }
-
-                IconButton(onClick = { viewModel.playerController.skipToNext() }, Modifier.size(40.dp)) {
-                    Icon(Icons.Rounded.SkipNext, null, Modifier.size(22.dp), tint = iconTint)
-                }
-            }
-        }
     }
 }

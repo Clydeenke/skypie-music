@@ -160,5 +160,25 @@ class MusicService : MediaSessionService() {
             }
             return super.onCustomCommand(session, controller, customCommand, args)
         }
+
+        // 处理媒体控件按钮（上一首、下一首等）
+        override fun onMediaButtonEvent(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            mediaButtonEvent: android.content.Intent
+        ): Boolean {
+            val intent = mediaButtonEvent
+            if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
+                val event = intent.getParcelableExtra<android.view.KeyEvent>(Intent.EXTRA_KEY_EVENT)
+                if (event?.keyCode == android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS 
+                    && event.action == android.view.KeyEvent.ACTION_DOWN) {
+                    // 上一首：始终切到上一首（绕过 ExoPlayer 内置的3秒判断）
+                    val prevIndex = (exoPlayer.currentMediaItemIndex - 1).coerceAtLeast(0)
+                    exoPlayer.seekTo(prevIndex, 0L)
+                    return true
+                }
+            }
+            return super.onMediaButtonEvent(session, controller, mediaButtonEvent)
+        }
     }
 }

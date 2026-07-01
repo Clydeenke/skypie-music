@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import androidx.media3.common.util.UnstableApi
 import com.yulight.skypie.data.model.DownloadStatus
 import com.yulight.skypie.data.model.DownloadTask
+import com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -211,7 +212,9 @@ class DownloadManager @Inject constructor(
                 put(MediaStore.Audio.Media.ARTIST, task.artist)
                 put(MediaStore.Audio.Media.MIME_TYPE, if (ext == "flac") "audio/flac" else "audio/mpeg")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/BingYin")
+                    val prefs = context.getSharedPreferences("skypie_settings", 0)
+                    val downloadDir = prefs.getString("download_dir", DEFAULT_DOWNLOAD_DIR) ?: DEFAULT_DOWNLOAD_DIR
+                    put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/$downloadDir")
                     put(MediaStore.Audio.Media.IS_PENDING, 1)
                 }
             }

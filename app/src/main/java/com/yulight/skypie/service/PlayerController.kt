@@ -26,8 +26,10 @@ class PlayerController @Inject constructor(
     private var controllerFuture : ListenableFuture<MediaController>? = null
     private var mediaController  : MediaController? = null
 
-    private var currentQueue : List<Song> = emptyList()
-    private var currentIndex : Int        = 0
+    private val _currentQueue = MutableStateFlow<List<Song>>(emptyList())
+    private val _currentIndex = MutableStateFlow(0)
+    val currentQueue : StateFlow<List<Song>> = _currentQueue.asStateFlow()
+    val currentIndex : StateFlow<Int>        = _currentIndex.asStateFlow()
     val songLrcMap = mutableMapOf<String, String>()  // key: song.id 转为 String
 
     // 在线播放：存储原始歌曲列表、URL缓存、切歌回调
@@ -76,16 +78,20 @@ class PlayerController @Inject constructor(
             val mediaId = item?.mediaId
             if (!mediaId.isNullOrEmpty()) {
                 // 用歌曲唯一ID查找，不用位置索引
-                val song = currentQueue.find { it.id.toString() == mediaId }
+                val song = _currentQueue.value.find { it.id.toString() == mediaId }
                 if (song != null) {
                     _currentSong.value = song
-                    currentIndex = currentQueue.indexOf(song)
+                    _currentIndex.value = _currentQueue.value.indexOf(song)
                     // 更新在线播放的 streamUrl 和歌词
                     if (_isOnlineMode.value) {
                         _currentStreamUrl = song.uri
-                        _onlineLrcText.value = songLrcMap[song.id.toString()] ?: ""
+                        // 通过歌曲信息匹配原始在线歌曲ID，不依赖索引对齐
+                        val originalId = onlineSongs.find { it.title == song.title && it.artist == song.artist }?.id ?: ""
+                        _onlineLrcText.value = songLrcMap[song.id.toString()]
+                            ?: songLrcMap[originalId]
+                            ?: ""
                         // 通知外部切歌（用于按需解析URL和歌词）
-                        onSongTransition?.invoke(currentIndex)
+                        onSongTransition?.invoke(_currentIndex.value)
                         // 预取下一首的 URL
                         preFetchNextUrl()
                     }
@@ -101,18 +107,18 @@ class PlayerController @Inject constructor(
      * 预取下一首歌曲的 URL（后台静默加载）
      */
     private fun preFetchNextUrl() {
-        val nextIndex = currentIndex + 1
-        if (nextIndex >= currentQueue.size) {
+        val nextIndex = _currentIndex.value + 1
+        if (nextIndex >= _currentQueue.value.size) {
             // 队列末尾，循环模式下预取第一首
-            if (_repeatMode.value == Player.REPEAT_MODE_ALL && currentQueue.isNotEmpty()) {
-                val firstSong = currentQueue[0]
+            if (_repeatMode.value == Player.REPEAT_MODE_ALL && _currentQueue.value.isNotEmpty()) {
+                val firstSong = _currentQueue.value[0]
                 if (firstSong.uri.startsWith("placeholder_")) {
                     onSongTransition?.invoke(0)
                 }
             }
             return
         }
-        val nextSong = currentQueue[nextIndex]
+        val nextSong = _currentQueue.value[nextIndex]
         // 如果不是 placeholder，跳过
         if (!nextSong.uri.startsWith("placeholder_")) return
         // 通知外部解析 URL
@@ -163,17 +169,17 @@ class PlayerController @Inject constructor(
             songLrcMap[songs[startIdx].id.toString()] = lrcText
         }
         _onlineLrcText.value = if (isOnline) (songLrcMap[songs[startIdx].id.toString()] ?: "") else ""
-        currentQueue = songs
-        currentIndex = startIdx
+        _currentQueue.value = songs
+        _currentIndex.value = startIdx
         val items = songs.mapIndexed { index, song -> song.toMediaItem(index, isOnline) }
         mediaController?.run {
             clearMediaItems()
-            setMediaItems(items, currentIndex, 0L)
+            setMediaItems(items, _currentIndex.value, 0L)
             repeatMode = Player.REPEAT_MODE_ALL
             prepare()
             play()
         }
-        _currentSong.value = songs.getOrNull(currentIndex)
+        _currentSong.value = songs.getOrNull(_currentIndex.value)
     }
 
     fun restoreQueue(songs: List<Song>, startIndex: Int, positionMs: Long) {
@@ -183,45 +189,44 @@ class PlayerController @Inject constructor(
         _isOnlineMode.value = isOnline
         _currentStreamUrl   = if (isOnline) songs[idx].uri else null
         _onlineLrcText.value = if (isOnline) (songLrcMap[songs[idx].id.toString()] ?: "") else ""
-        currentQueue = songs
-        currentIndex = idx
+        _currentQueue.value = songs
+        _currentIndex.value = idx
         val items = songs.mapIndexed { index, song -> song.toMediaItem(index, isOnline) }
         mediaController?.run {
+            // 如果已经在播放同一首歌，只更新UI状态，不重新prepare
+            if (currentMediaItemIndex == _currentIndex.value && isPlaying) {
+                _currentSong.value = songs.getOrNull(_currentIndex.value)
+                return
+            }
             clearMediaItems()
-            setMediaItems(items, currentIndex, positionMs)
+            setMediaItems(items, _currentIndex.value, positionMs)
             repeatMode = Player.REPEAT_MODE_ALL
             prepare()
         }
-        _currentSong.value = songs.getOrNull(currentIndex)
+        _currentSong.value = songs.getOrNull(_currentIndex.value)
     }
 
     fun skipToNext() {
         val mc = mediaController ?: return
-        if (currentQueue.isEmpty()) return
+        if (_currentQueue.value.isEmpty()) return
         if (mc.hasNextMediaItem()) {
             mc.seekToNextMediaItem()
         } else {
             mc.seekTo(0, 0L)
             mc.play()
-            _currentSong.value = currentQueue.firstOrNull()
-            currentIndex = 0
+            _currentSong.value = _currentQueue.value.firstOrNull()
+            _currentIndex.value = 0
         }
     }
 
     fun skipToPrevious() {
         val mc = mediaController ?: return
-        if (currentQueue.isEmpty()) return
-        when {
-            mc.currentPosition > 3000 -> mc.seekTo(0L)
-            mc.hasPreviousMediaItem() -> mc.seekToPreviousMediaItem()
-            else -> {
-                val last = currentQueue.lastIndex
-                mc.seekTo(last, 0L)
-                mc.play()
-                _currentSong.value = currentQueue.lastOrNull()
-                currentIndex = last
-            }
-        }
+        if (_currentQueue.value.isEmpty()) return
+        // 始终切到上一首（绕过 ExoPlayer 内置的3秒判断）
+        val prevIndex = (mc.currentMediaItemIndex - 1).coerceAtLeast(0)
+        _currentIndex.value = prevIndex
+        _currentSong.value = _currentQueue.value.getOrNull(prevIndex)
+        mc.seekTo(prevIndex, 0L)
     }
 
     fun seekTo(ms: Long) {
@@ -258,9 +263,9 @@ class PlayerController @Inject constructor(
 
     fun getCurrentPosition(): Long = mediaController?.currentPosition ?: 0L
     fun getDuration()       : Long = mediaController?.duration?.coerceAtLeast(0L) ?: 0L
-    fun getCurrentQueueSize(): Int = currentQueue.size
-    fun getCurrentIndex()   : Int  = currentIndex.coerceIn(0, (currentQueue.size - 1).coerceAtLeast(0))
-    fun getSongAt(index: Int): Song? = currentQueue.getOrNull(index)
+    fun getCurrentQueueSize(): Int = _currentQueue.value.size
+    fun getCurrentIndex()   : Int  = _currentIndex.value.coerceIn(0, (_currentQueue.value.size - 1).coerceAtLeast(0))
+    fun getSongAt(index: Int): Song? = _currentQueue.value.getOrNull(index)
 
     /**
      * 更新队列中指定位置的 MediaItem URI（用于在线歌曲按需解析URL后更新）
@@ -270,12 +275,12 @@ class PlayerController @Inject constructor(
         val mc = mediaController ?: return
         if (index < 0 || index >= mc.mediaItemCount) return
         // 如果是当前正在播放的歌曲，需要特殊处理
-        val isCurrentItem = (index == currentIndex)
+        val isCurrentItem = (index == _currentIndex.value)
         // 设置标志，避免触发transition回调导致跳歌
         isUpdatingUrl = true
         try {
             // 构建新的 MediaItem
-            val song = currentQueue.getOrNull(index) ?: return
+            val song = _currentQueue.value.getOrNull(index) ?: return
             val artUri = song.albumArtUri?.let { Uri.parse(it) }
             val metadata = MediaMetadata.Builder()
                 .setTitle(song.title)
@@ -297,7 +302,7 @@ class PlayerController @Inject constructor(
                 mc.play()
             }
             // 同步更新 currentQueue
-            currentQueue = currentQueue.toMutableList().apply {
+            _currentQueue.value = _currentQueue.value.toMutableList().apply {
                 set(index, song.copy(uri = newUrl))
             }
         } finally {
@@ -307,12 +312,12 @@ class PlayerController @Inject constructor(
 
     fun playAtIndex(index: Int) {
         val mc = mediaController ?: return
-        if (currentQueue.isEmpty()) return
-        val target = index.coerceIn(0, currentQueue.lastIndex)
+        if (_currentQueue.value.isEmpty()) return
+        val target = index.coerceIn(0, _currentQueue.value.lastIndex)
         mc.seekTo(target, 0L)
         mc.play()
-        _currentSong.value = currentQueue.getOrNull(target)
-        currentIndex = target
+        _currentSong.value = _currentQueue.value.getOrNull(target)
+        _currentIndex.value = target
     }
 
     /**
@@ -321,29 +326,66 @@ class PlayerController @Inject constructor(
      */
     fun playNext(song: Song) {
         val mc = mediaController ?: return
+        // 如果歌曲已在队列中，先从原位置移除
+        val existingIndex = _currentQueue.value.indexOfFirst { it.id == song.id }
+        if (existingIndex >= 0) {
+            mc.removeMediaItem(existingIndex)
+            _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(existingIndex) }
+            if (existingIndex < _currentIndex.value) _currentIndex.value--
+        }
         // 插入位置 = 当前索引 + 1，边界保护：不超过列表末尾
-        val insertIndex = (mc.currentMediaItemIndex + 1).coerceIn(0, mc.mediaItemCount)
+        val insertIndex = (_currentIndex.value + 1).coerceIn(0, _currentQueue.value.size)
         mc.addMediaItem(insertIndex, song.toMediaItem())
         // 同步更新内存队列，保证 getSongAt() / getCurrentIndex() 等查询准确
-        currentQueue = currentQueue.toMutableList().apply {
+        _currentQueue.value = _currentQueue.value.toMutableList().apply {
             add(insertIndex.coerceIn(0, size), song)
         }
     }
 
-    fun removeFromQueue(index: Int) {
+    fun removeFromQueue(songId: String) {
         val mc = mediaController ?: return
-        if (index < 0 || index >= currentQueue.size) return
+        val index = _currentQueue.value.indexOfFirst { it.id.toString() == songId }
+        if (index < 0) return
+        val isCurrentSong = (index == _currentIndex.value)
         mc.removeMediaItem(index)
-        currentQueue = currentQueue.toMutableList().apply { removeAt(index) }
-        // 如果移除的是当前之前的歌，currentIndex 要往前移一位
-        if (index < currentIndex) currentIndex--
+        _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(index) }
+        if (isCurrentSong) {
+            if (_currentQueue.value.isEmpty()) {
+                _currentIndex.value = 0
+                _currentSong.value = null
+            } else {
+                if (_currentIndex.value >= _currentQueue.value.size) {
+                    _currentIndex.value = _currentQueue.value.lastIndex
+                }
+                _currentSong.value = _currentQueue.value.getOrNull(_currentIndex.value)
+            }
+        } else if (index < _currentIndex.value) {
+            _currentIndex.value--
+        }
     }
 
     fun clearQueue() {
         val mc = mediaController ?: return
         mc.clearMediaItems()
-        currentQueue = emptyList()
-        currentIndex = 0
+        _currentQueue.value = emptyList()
+        _currentIndex.value = 0
+    }
+
+    fun moveInQueue(from: Int, to: Int) {
+        val mc = mediaController ?: return
+        if (from < 0 || from >= _currentQueue.value.size || to < 0 || to >= _currentQueue.value.size) return
+        mc.moveMediaItem(from, to)
+        _currentQueue.value = _currentQueue.value.toMutableList().apply {
+            val item = removeAt(from)
+            add(to, item)
+        }
+        // 更新 currentIndex
+        _currentIndex.value = when {
+            _currentIndex.value == from -> to
+            from < _currentIndex.value && to >= _currentIndex.value -> _currentIndex.value - 1
+            from > _currentIndex.value && to <= _currentIndex.value -> _currentIndex.value + 1
+            else -> _currentIndex.value
+        }
     }
 
     fun release() {

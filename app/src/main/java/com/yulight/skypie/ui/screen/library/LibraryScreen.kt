@@ -44,6 +44,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
 import androidx.compose.material.icons.rounded.Add
@@ -121,7 +125,7 @@ import kotlin.math.abs
 
 private val RelaxedEasing    = CubicBezierEasing(0.25f, 0.85f, 0.2f, 1.0f)
 private val DrawerWidth      = 260.dp
-private val EdgeTriggerWidth = 56.dp
+private val EdgeTriggerWidth = 80.dp
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LibraryScreen —— 本地音乐库主界面
@@ -148,7 +152,6 @@ fun LibraryScreen(
     val currentSong     by viewModel.playerController.currentSong.collectAsStateWithLifecycle()
     val sortOrder       by viewModel.sortOrder.collectAsStateWithLifecycle()
     val playlists       by viewModel.playlists.collectAsStateWithLifecycle()
-    val totalListenedMs by viewModel.totalListenedMs.collectAsStateWithLifecycle()
 
     // ── UI 状态 ───────────────────────────────────────────────────────────
     var isSearchExpanded by remember { mutableStateOf(false) }
@@ -171,6 +174,12 @@ fun LibraryScreen(
     BackHandler(enabled = isMultiSelect) {
         isMultiSelect = false
         selectedIds   = emptySet()
+    }
+
+    // 搜索模式下系统返回键 = 关闭搜索
+    BackHandler(enabled = isSearchExpanded) {
+        isSearchExpanded = false
+        viewModel.setSearchQuery("")
     }
 
     // ── 抽屉手势 ──────────────────────────────────────────────────────────
@@ -203,7 +212,6 @@ fun LibraryScreen(
                     val down = awaitFirstDown(requireUnconsumed = false)
                     velocityTracker.resetTracking()
                     velocityTracker.addPosition(down.uptimeMillis, down.position)
-                    if (!isDrawerOpen && down.position.x > edgeTriggerPx) return@awaitEachGesture
                     var isHorizontalGesture = false
                     var accX = 0f; var accY = 0f
                     while (true) {
@@ -213,9 +221,9 @@ fun LibraryScreen(
                             if (isHorizontalGesture) {
                                 val vx = velocityTracker.calculateVelocity().x
                                 isDrawerOpen = when {
-                                    vx >  500f -> true
-                                    vx < -500f -> false
-                                    else       -> dragOffset.value > drawerWidthPx * 0.3f
+                                    vx >  200f -> true
+                                    vx < -200f -> false
+                                    else       -> accX > 0f
                                 }
                             }
                             break
@@ -294,10 +302,9 @@ fun LibraryScreen(
 
                 // ── 统计栏 ──────────────────────────────────────────────────
                 StatsRow(
-                    songCount       = songs.size,
-                    totalListenedMs = totalListenedMs,
-                    sortOrder       = sortOrder,
-                    onSortClick     = { showSortSheet = true }
+                    songCount   = songs.size,
+                    sortOrder   = sortOrder,
+                    onSortClick = { showSortSheet = true }
                 )
 
                 // ── 歌曲列表 ────────────────────────────────────────────────
@@ -413,12 +420,11 @@ fun LibraryScreen(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// StatsRow —— 歌曲数 + 累计听歌时长 + 排序按钮
+// StatsRow —— 歌曲数 + 排序按钮
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun StatsRow(
     songCount       : Int,
-    totalListenedMs : Long,
     sortOrder       : SortOrder,
     onSortClick     : () -> Unit,
 ) {
@@ -435,20 +441,13 @@ private fun StatsRow(
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // 左侧：歌曲数 + 累计时长
+        // 左侧：歌曲数
         Column {
             Text(
                 text  = if (songCount == 0) "暂无歌曲" else "$songCount 首歌曲",
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface
             )
-            if (totalListenedMs > 0L) {
-                Text(
-                    text  = "累计听了 ${formatDuration(totalListenedMs)}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                )
-            }
         }
         // 右侧：排序按钮
         TextButton(
@@ -1168,6 +1167,8 @@ fun IntegratedSearchBar(
     isExpanded   : Boolean,
     onToggle     : (Boolean) -> Unit,
 ) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val interactionSource = remember { MutableInteractionSource() }
     val widthFraction by animateFloatAsState(
         targetValue   = if (isExpanded) 1f else 0.12f,
@@ -1179,6 +1180,15 @@ fun IntegratedSearchBar(
         animationSpec = tween(400),
         label         = "searchContentAlpha"
     )
+
+    LaunchedEffect(isExpanded) {
+        if (isExpanded) {
+            kotlinx.coroutines.delay(350)
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
     Box(modifier = Modifier.fillMaxWidth().height(48.dp), contentAlignment = Alignment.CenterEnd) {
         Box(
             modifier = Modifier
@@ -1206,7 +1216,10 @@ fun IntegratedSearchBar(
                 BasicTextField(
                     value        = query,
                     onValueChange= onQueryChange,
-                    modifier     = Modifier.weight(1f).alpha(contentAlpha),
+                    modifier     = Modifier
+                        .weight(1f)
+                        .alpha(contentAlpha)
+                        .focusRequester(focusRequester),
                     textStyle    = TextStyle(fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface),
                     singleLine   = true,
                     cursorBrush  = SolidColor(MaterialTheme.colorScheme.primary),
@@ -1219,7 +1232,7 @@ fun IntegratedSearchBar(
                 )
                 if (isExpanded) {
                     IconButton(
-                        onClick  = { if (query.isNotEmpty()) onQueryChange("") else onToggle(false) },
+                        onClick  = { if (query.isNotEmpty()) onQueryChange("") else { onToggle(false); keyboardController?.hide() } },
                         modifier = Modifier.alpha(contentAlpha)
                     ) {
                         Icon(Icons.Rounded.Close, if (query.isNotEmpty()) "清除" else "关闭搜索", modifier = Modifier.size(20.dp))

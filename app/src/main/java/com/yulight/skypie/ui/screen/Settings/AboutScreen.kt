@@ -94,7 +94,7 @@ fun AboutScreen(onBack: () -> Unit = {}) {
                 Spacer(Modifier.height(2.dp))
                 Text("Skypie Music", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(6.dp))
-                Text("版本 $versionName-2026.6.16", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("版本 $versionName-2026.7.1", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(Modifier.height(28.dp))
@@ -137,6 +137,40 @@ fun AboutScreen(onBack: () -> Unit = {}) {
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("更新日志", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 12.dp))
+                    ChangelogItem("1.3.2-2026.7.1", listOf(
+                        "新增",
+                        "全新播放队列，支持滑动删除和拖拽排序",
+                        "下载目录设置，可自定义歌曲保存位置",
+                        "云端播放音质设置（标准/高品质/无损）",
+                        "",
+                        "改动",
+                        "移除听歌时长统计",
+                        "",
+                        "优化",
+                        "音乐库搜索自动弹出键盘",
+                        "侧边栏滑动手势更灵敏",
+                    ))
+                    Spacer(Modifier.height(16.dp))
+                    ChangelogItem("1.3.1-2026.6.19", listOf(
+                        "新增",
+                        "导航迁移至 Navigation 3",
+                        "听歌时长持久化存储",
+                        "听歌时长文件加密保护",
+                        "",
+                        "修复",
+                        "云端歌曲切换时高亮不更新",
+                        "云端歌曲歌词不显示",
+                        "全屏播放器/歌词界面侧滑返回动画重复触发",
+                        "上一首歌曲行为修正",
+                        "封面图片清晰度提升",
+                        "",
+                        "优化",
+                        "歌词进度轮询频率降低，减少卡顿",
+                        "列表滚动动画优化",
+                        "3D封面陀螺仪按需启用，节省电量",
+                        "封面图片按需加载，减少内存占用",
+                    ))
+                    Spacer(Modifier.height(16.dp))
                     ChangelogItem("1.3.0-2026.6.16", listOf(
                         "新增",
                         "下载队列管理",
@@ -201,7 +235,7 @@ private fun ChangelogItem(version: String, items: List<String>) {
         items.forEach { item ->
             if (item.isEmpty()) {
                 Spacer(Modifier.height(8.dp))
-            } else if (item == "新增" || item == "优化" || item == "修复") {
+            } else if (item == "新增" || item == "优化" || item == "修复" || item == "改动") {
                 Text(item, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), modifier = Modifier.padding(bottom = 4.dp))
             } else {
                 Text(item, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 2.dp, start = 8.dp))

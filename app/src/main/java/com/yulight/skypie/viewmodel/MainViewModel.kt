@@ -27,8 +27,6 @@ private const val PREFS_PLAYER  = "skypie_player"
 private const val KEY_LAST_SONG = "last_song_id"
 private const val KEY_LAST_POS  = "last_position_ms"
 
-private const val KEY_TOTAL_LISTENED_MS = "total_listened_ms"
-
 /** 歌曲列表排序方式 */
 enum class SortOrder {
     TITLE,       // 按标题 A→Z
@@ -61,10 +59,6 @@ class MusicViewModel @Inject constructor(
     val openPlayerEvent: StateFlow<Boolean> = _openPlayerEvent.asStateFlow()
     fun requestOpenPlayer() { _openPlayerEvent.value = true  }
     fun consumeOpenPlayer() { _openPlayerEvent.value = false }
-
-    // ── 累计听歌时长（毫秒，持久化到 SharedPreferences） ─────────────────────────
-    private val _totalListenedMs = MutableStateFlow(prefs.getLong(KEY_TOTAL_LISTENED_MS, 0L))
-    val totalListenedMs: StateFlow<Long> = _totalListenedMs.asStateFlow()
 
     // ── 多选模式状态（供 SharedPlayerContainer 隐藏迷你播放条） ──────────────────
     private val _isMultiSelectActive = MutableStateFlow(false)
@@ -157,8 +151,8 @@ class MusicViewModel @Inject constructor(
         playerController.playNext(song)
     }
 
-    fun removeFromQueue(index: Int) {
-        playerController.removeFromQueue(index)
+    fun removeFromQueue(songId: String) {
+        playerController.removeFromQueue(songId)
     }
 
     fun clearQueue() {
@@ -168,14 +162,9 @@ class MusicViewModel @Inject constructor(
     fun savePlaybackProgress() {
         val song = playerController.currentSong.value ?: return
         val pos  = playerController.getCurrentPosition()
-        // 仅在实际播放时累积时长（每 5 秒调用一次，加 5 秒）
-        val addMs    = if (playerController.isPlaying.value) 1_000L else 0L
-        val newTotal = _totalListenedMs.value + addMs
-        _totalListenedMs.value = newTotal
         prefs.edit()
             .putLong(KEY_LAST_SONG, song.id)
             .putLong(KEY_LAST_POS,  pos)
-            .putLong(KEY_TOTAL_LISTENED_MS, newTotal)
             .apply()
     }
 
