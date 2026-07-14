@@ -94,7 +94,7 @@ fun AboutScreen(onBack: () -> Unit = {}) {
                 Spacer(Modifier.height(2.dp))
                 Text("Skypie Music", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(6.dp))
-                Text("版本 $versionName-2026.7.1", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("版本 $versionName-2025.7.14", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(Modifier.height(28.dp))
@@ -137,6 +137,24 @@ fun AboutScreen(onBack: () -> Unit = {}) {
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("更新日志", style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(bottom = 12.dp))
+                    ChangelogItem("1.3.3-2025.7.14", listOf(
+                        "新增",
+                        "播放/暂停按钮 UI 更新",
+                        "全屏播放进度条 UI 更新",
+                        "\"添加到下一首\"按钮，点击后可撤销，5秒内有效",
+                        "撤销时队列内歌曲自动回到原位置",
+                        "",
+                        "优化",
+                        "所有按钮按压反馈改为缩放+透明度，更干脆",
+                        "歌词预览动画更柔和",
+                        "切歌时播放按钮不再暂停",
+                        "迷你播放条按钮也统一了样式",
+                        "",
+                        "修复",
+                        "在线播放闪退（playQuality 递归问题）",
+                        "播放队列拖拽后点歌播放错位",
+                    ))
+                    Spacer(Modifier.height(16.dp))
                     ChangelogItem("1.3.2-2026.7.1", listOf(
                         "新增",
                         "全新播放队列，支持滑动删除和拖拽排序",
