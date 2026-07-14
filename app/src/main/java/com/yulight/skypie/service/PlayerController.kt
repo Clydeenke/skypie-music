@@ -16,6 +16,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 @androidx.media3.common.util.UnstableApi
@@ -25,6 +27,7 @@ class PlayerController @Inject constructor(
 ) {
     private var controllerFuture : ListenableFuture<MediaController>? = null
     private var mediaController  : MediaController? = null
+    private val queueMutex = Mutex()
 
     private val _currentQueue = MutableStateFlow<List<Song>>(emptyList())
     private val _currentIndex = MutableStateFlow(0)
@@ -72,6 +75,12 @@ class PlayerController @Inject constructor(
                 preFetchNextUrl()
             }
         }
+        override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // 在线播放遇到错误时暂停，防止崩溃
+            if (_isOnlineMode.value) {
+                mediaController?.pause()
+            }
+        }
         override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
             // 正在更新URL时忽略transition，避免重复跳歌
             if (isUpdatingUrl) return
@@ -90,6 +99,10 @@ class PlayerController @Inject constructor(
                         _onlineLrcText.value = songLrcMap[song.id.toString()]
                             ?: songLrcMap[originalId]
                             ?: ""
+                        // 如果是 placeholder URI，暂停播放等待 URL 解析完成
+                        if (song.uri.startsWith("placeholder_")) {
+                            mediaController?.pause()
+                        }
                         // 通知外部切歌（用于按需解析URL和歌词）
                         onSongTransition?.invoke(_currentIndex.value)
                         // 预取下一首的 URL
@@ -293,12 +306,11 @@ class PlayerController @Inject constructor(
                 .setMediaId(song.id.toString())  // 用歌曲唯一ID
                 .setMediaMetadata(metadata)
                 .build()
-            // 替换 MediaItem（不 seekTo，让 ExoPlayer 自然播放）
-            mc.removeMediaItem(index)
-            mc.addMediaItem(index, newItem)
+            // 原子替换 MediaItem，避免 remove+add 的竞态问题
+            mc.replaceMediaItem(index, newItem)
             // 只有当前歌曲才需要恢复播放状态
             if (isCurrentItem && forceResume) {
-                mc.seekTo(index, mc.currentPosition)
+                mc.seekTo(index, 0L)
                 mc.play()
             }
             // 同步更新 currentQueue
@@ -326,41 +338,86 @@ class PlayerController @Inject constructor(
      */
     fun playNext(song: Song) {
         val mc = mediaController ?: return
-        // 如果歌曲已在队列中，先从原位置移除
         val existingIndex = _currentQueue.value.indexOfFirst { it.id == song.id }
         if (existingIndex >= 0) {
             mc.removeMediaItem(existingIndex)
             _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(existingIndex) }
             if (existingIndex < _currentIndex.value) _currentIndex.value--
         }
-        // 插入位置 = 当前索引 + 1，边界保护：不超过列表末尾
         val insertIndex = (_currentIndex.value + 1).coerceIn(0, _currentQueue.value.size)
         mc.addMediaItem(insertIndex, song.toMediaItem())
-        // 同步更新内存队列，保证 getSongAt() / getCurrentIndex() 等查询准确
         _currentQueue.value = _currentQueue.value.toMutableList().apply {
             add(insertIndex.coerceIn(0, size), song)
         }
     }
 
-    fun removeFromQueue(songId: String) {
-        val mc = mediaController ?: return
-        val index = _currentQueue.value.indexOfFirst { it.id.toString() == songId }
-        if (index < 0) return
-        val isCurrentSong = (index == _currentIndex.value)
-        mc.removeMediaItem(index)
-        _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(index) }
-        if (isCurrentSong) {
-            if (_currentQueue.value.isEmpty()) {
-                _currentIndex.value = 0
-                _currentSong.value = null
+    /**
+     * 将歌曲插入下一首，返回原始位置（-1 表示不在队列中）
+     */
+    fun playNextWithPosition(song: Song): Int {
+        val mc = mediaController ?: return -1
+        val existingIndex = _currentQueue.value.indexOfFirst { it.id == song.id }
+        if (existingIndex >= 0) {
+            mc.removeMediaItem(existingIndex)
+            _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(existingIndex) }
+            if (existingIndex < _currentIndex.value) _currentIndex.value--
+        }
+        val insertIndex = (_currentIndex.value + 1).coerceIn(0, _currentQueue.value.size)
+        mc.addMediaItem(insertIndex, song.toMediaItem())
+        _currentQueue.value = _currentQueue.value.toMutableList().apply {
+            add(insertIndex.coerceIn(0, size), song)
+        }
+        return existingIndex
+    }
+
+    /**
+     * 恢复歌曲到原位置（originalIndex >= 0），或移除（originalIndex == -1）
+     */
+    suspend fun restoreFromPlayNext(song: Song, originalIndex: Int) {
+        queueMutex.withLock {
+            val mc = mediaController ?: return@withLock
+            val currentIdx = _currentQueue.value.indexOfFirst { it.id == song.id }
+            if (currentIdx < 0) return@withLock
+
+            if (originalIndex < 0) {
+                mc.removeMediaItem(currentIdx)
+                _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(currentIdx) }
+                if (currentIdx < _currentIndex.value) _currentIndex.value--
             } else {
-                if (_currentIndex.value >= _currentQueue.value.size) {
-                    _currentIndex.value = _currentQueue.value.lastIndex
+                mc.removeMediaItem(currentIdx)
+                _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(currentIdx) }
+                val targetIdx = originalIndex.coerceAtMost(_currentQueue.value.size)
+                mc.addMediaItem(targetIdx, song.toMediaItem())
+                _currentQueue.value = _currentQueue.value.toMutableList().apply {
+                    add(targetIdx.coerceAtMost(size), song)
                 }
-                _currentSong.value = _currentQueue.value.getOrNull(_currentIndex.value)
+                if (currentIdx < _currentIndex.value && targetIdx >= _currentIndex.value) _currentIndex.value--
+                else if (currentIdx >= _currentIndex.value && targetIdx < _currentIndex.value) _currentIndex.value++
             }
-        } else if (index < _currentIndex.value) {
-            _currentIndex.value--
+        }
+    }
+
+    suspend fun removeFromQueue(songId: String) {
+        queueMutex.withLock {
+            val mc = mediaController ?: return@withLock
+            val index = _currentQueue.value.indexOfFirst { it.id.toString() == songId }
+            if (index < 0) return@withLock
+            val isCurrentSong = (index == _currentIndex.value)
+            mc.removeMediaItem(index)
+            _currentQueue.value = _currentQueue.value.toMutableList().apply { removeAt(index) }
+            if (isCurrentSong) {
+                if (_currentQueue.value.isEmpty()) {
+                    _currentIndex.value = 0
+                    _currentSong.value = null
+                } else {
+                    if (_currentIndex.value >= _currentQueue.value.size) {
+                        _currentIndex.value = _currentQueue.value.lastIndex
+                    }
+                    _currentSong.value = _currentQueue.value.getOrNull(_currentIndex.value)
+                }
+            } else if (index < _currentIndex.value) {
+                _currentIndex.value--
+            }
         }
     }
 
@@ -371,20 +428,22 @@ class PlayerController @Inject constructor(
         _currentIndex.value = 0
     }
 
-    fun moveInQueue(from: Int, to: Int) {
-        val mc = mediaController ?: return
-        if (from < 0 || from >= _currentQueue.value.size || to < 0 || to >= _currentQueue.value.size) return
-        mc.moveMediaItem(from, to)
-        _currentQueue.value = _currentQueue.value.toMutableList().apply {
-            val item = removeAt(from)
-            add(to, item)
-        }
-        // 更新 currentIndex
-        _currentIndex.value = when {
-            _currentIndex.value == from -> to
-            from < _currentIndex.value && to >= _currentIndex.value -> _currentIndex.value - 1
-            from > _currentIndex.value && to <= _currentIndex.value -> _currentIndex.value + 1
-            else -> _currentIndex.value
+    suspend fun moveInQueue(from: Int, to: Int) {
+        queueMutex.withLock {
+            val mc = mediaController ?: return@withLock
+            if (from < 0 || from >= _currentQueue.value.size || to < 0 || to >= _currentQueue.value.size) return@withLock
+            mc.moveMediaItem(from, to)
+            _currentQueue.value = _currentQueue.value.toMutableList().apply {
+                val item = removeAt(from)
+                add(to, item)
+            }
+            // 更新 currentIndex
+            _currentIndex.value = when {
+                _currentIndex.value == from -> to
+                from < _currentIndex.value && to >= _currentIndex.value -> _currentIndex.value - 1
+                from > _currentIndex.value && to <= _currentIndex.value -> _currentIndex.value + 1
+                else -> _currentIndex.value
+            }
         }
     }
 

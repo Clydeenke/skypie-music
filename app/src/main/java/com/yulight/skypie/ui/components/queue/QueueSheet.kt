@@ -40,6 +40,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,12 +63,11 @@ import coil.request.SuccessResult
 import com.yulight.skypie.domain.model.Song
 import com.yulight.skypie.viewmodel.MusicViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import sh.calvin.reorderable.ReorderableCollectionItemScope
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
-import kotlin.math.abs
-import kotlin.math.roundToInt
 
 // ══════════════════════════════════════════════════════════════════════════════
 // QueueSheet — 播放队列底部弹窗
@@ -84,18 +84,10 @@ fun QueueSheet(
     val currentSong by controller.currentSong.collectAsState()
     val isPlaying by controller.isPlaying.collectAsState()
 
-    var localQueue by remember(currentQueue) { mutableStateOf(currentQueue) }
     val currentSongId = currentSong?.id
     val hapticFeedback = LocalHapticFeedback.current
     val lazyListState = rememberLazyListState()
-    var dragStartQueue by remember { mutableStateOf<List<Song>>(emptyList()) }
-
-    val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        localQueue = localQueue.toMutableList().apply {
-            add(to.index, removeAt(from.index))
-        }
-        hapticFeedback.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
-    }
+    val scope = rememberCoroutineScope()
 
     // ── 动态背景色（从封面取色） ──
     var bgColor by remember { mutableStateOf(Color(0xFF1C1B1F)) }
@@ -160,27 +152,16 @@ fun QueueSheet(
 
             // ── 队列列表 ──
             QueueList(
-                queue = localQueue,
+                queue = currentQueue,
                 currentSongId = currentSongId,
                 bgColor = bgColor,
                 onBgColor = onBgColor,
                 onBgVariant = onBgVariant,
-                onQueueChange = { localQueue = it },
                 onRemove = { song ->
                     viewModel.removeFromQueue(songId = song.id.toString())
-                    localQueue = localQueue.toMutableList().apply { removeAll { it.id == song.id } }
                 },
                 onPlay = { index -> controller.playAtIndex(index) },
-                onMove = { from, to -> viewModel.playerController.moveInQueue(from, to) },
-                onDragStart = { dragStartQueue = localQueue.toList() },
-                onDragStop = { song ->
-                    val to = localQueue.indexOfFirst { it.id == song.id }
-                    val from = dragStartQueue.indexOfFirst { it.id == song.id }
-                    if (from in dragStartQueue.indices && to in localQueue.indices) {
-                        viewModel.playerController.moveInQueue(from, to)
-                    }
-                    dragStartQueue = emptyList()
-                },
+                onMove = { from, to -> scope.launch { viewModel.playerController.moveInQueue(from, to) } },
             )
         }
     }
@@ -264,18 +245,15 @@ private fun QueueList(
     bgColor: Color,
     onBgColor: Color,
     onBgVariant: Color,
-    onQueueChange: (List<Song>) -> Unit,
     onRemove: (Song) -> Unit,
     onPlay: (Int) -> Unit,
     onMove: (from: Int, to: Int) -> Unit,
-    onDragStart: () -> Unit,
-    onDragStop: (Song) -> Unit,
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val lazyListState = rememberLazyListState()
 
     val reorderableState = rememberReorderableLazyListState(lazyListState) { from, to ->
-        onQueueChange(queue.toMutableList().apply { add(to.index, removeAt(from.index)) })
+        onMove(from.index, to.index)
         hapticFeedback.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
     }
 
@@ -319,10 +297,9 @@ private fun QueueList(
                     onDelete = { onRemove(song) },
                     onPlay = { onPlay(index) },
                     onDragStarted = {
-                        onDragStart()
                         hapticFeedback.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
                     },
-                    onDragStopped = { onDragStop(song) },
+                    onDragStopped = {},
                 )
             }
         }

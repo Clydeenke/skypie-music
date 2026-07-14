@@ -7,11 +7,16 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -26,8 +31,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -53,12 +63,6 @@ import androidx.compose.ui.geometry.Offset
 import kotlin.math.cos
 import kotlin.math.sin
 
-/**
- * 陀螺仪3D封面 - 角速度累加 + 阻尼模式
- *
- * 使用 TYPE_GYROSCOPE 获取角速度，每帧累加角度变化量。
- * 接近极限时施加阻尼，让用户感受到"阻力"而非硬停。
- */
 @Composable
 fun rememberGyroscopeState(enabled: Boolean = true): Pair<Float, Float> {
     val context = LocalContext.current
@@ -125,8 +129,15 @@ internal fun FullPlayer(
 ) {
     val controller    = viewModel.playerController
     val song          by controller.currentSong.collectAsStateWithLifecycle()
-    val isPlaying     by controller.isPlaying.collectAsStateWithLifecycle()
+    val rawIsPlaying  by controller.isPlaying.collectAsStateWithLifecycle()
     val playMode      by controller.playMode.collectAsStateWithLifecycle()
+
+    // 播放状态防抖：切歌瞬间避免闪烁
+    var debouncedIsPlaying by remember { mutableStateOf(false) }
+    LaunchedEffect(rawIsPlaying) {
+        if (!rawIsPlaying) delay(250)
+        debouncedIsPlaying = rawIsPlaying
+    }
     val scope         = rememberCoroutineScope()
     val controllerRef by rememberUpdatedState(controller)
 
@@ -144,17 +155,25 @@ internal fun FullPlayer(
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubProg   by remember { mutableFloatStateOf(0f) }
     var lastSongId  by remember { mutableStateOf(song?.id) }
+    val progressAnim = remember { Animatable(0f) }
+
+    // 切歌时进度点滑动归零动画（仅非拖动时触发）
+    LaunchedEffect(song?.id) {
+        if (lastSongId != null && song?.id != lastSongId && !isScrubbing) {
+            progressAnim.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(180, easing = FastOutSlowInEasing)
+            )
+        }
+        lastSongId = song?.id
+    }
 
     LaunchedEffect(Unit) {
         while (isActive) {
-            // 检测切歌，立即重置
-            if (song?.id != lastSongId) {
-                lastSongId = song?.id
-                currentMs = 0L
-            }
             if (!isScrubbing) {
                 currentMs  = controllerRef.getCurrentPosition()
                 durationMs = controllerRef.getDuration().coerceAtLeast(1L)
+                progressAnim.snapTo((currentMs.toFloat() / durationMs).coerceIn(0f, 1f))
             }
             delay(500)
         }
@@ -268,7 +287,7 @@ internal fun FullPlayer(
             modifier          = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp).then(fadeAlpha),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onCollapse, Modifier.size(48.dp)) {
+            PressableIcon(onClick = onCollapse, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Rounded.KeyboardArrowDown, "收起", Modifier.size(30.dp), tint = onBg.copy(alpha = 0.90f))
             }
             Text(
@@ -278,7 +297,7 @@ internal fun FullPlayer(
                 modifier = Modifier.weight(1f),
                 textAlign = TextAlign.Center
             )
-            IconButton(onClick = onQueueClick, Modifier.size(48.dp)) {
+            PressableIcon(onClick = onQueueClick, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Rounded.FormatListBulleted, "播放队列", Modifier.size(22.dp), tint = onBg.copy(alpha = 0.90f))
             }
         }
@@ -403,7 +422,11 @@ internal fun FullPlayer(
                             targetValue   = when { isActive -> 1f; idx == currentLrcIdx - 1 || idx == currentLrcIdx + 1 -> 0.45f; else -> 0.18f },
                             animationSpec = tween(600), label = "lrcAlpha$idx"
                         )
-                        val textScale by animateFloatAsState(if (isActive) 1.05f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessLow), label = "lrcScale$idx")
+                        val textScale by animateFloatAsState(
+                            targetValue = if (isActive) 1.05f else 1f,
+                            animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+                            label = "lrcScale$idx"
+                        )
                         Text(
                             text     = line.text,
                             style    = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal),
@@ -428,16 +451,149 @@ internal fun FullPlayer(
 
         // ── 进度条 ─────────────────────────────────────────────────────────────
         Column(Modifier.padding(horizontal = 20.dp).then(fadeAlpha)) {
-            val prog = if (isScrubbing) scrubProg else (currentMs.toFloat() / durationMs).coerceIn(0f, 1f)
-            Slider(
-                value                 = prog,
-                onValueChange         = { isScrubbing = true; scrubProg = it; currentMs = (it * durationMs).toLong() },
-                onValueChangeFinished = { controllerRef.seekTo((scrubProg * durationMs).toLong()); isScrubbing = false },
-                modifier              = Modifier.fillMaxWidth(),
-                colors                = SliderDefaults.colors(thumbColor = onBg, activeTrackColor = onBg, inactiveTrackColor = onBg.copy(alpha = 0.20f))
+            val prog = if (isScrubbing) scrubProg else progressAnim.value
+            var isDragging by remember { mutableStateOf(false) }
+
+            // 线条粗细动画
+            val strokeWidth by animateDpAsState(
+                targetValue = if (isDragging) 8.dp else 3.dp,
+                animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+                label = "strokeWidth"
             )
+
+            // 手柄透明度动画
+            val thumbAlpha by animateFloatAsState(
+                targetValue = if (isDragging) 1f else 0f,
+                animationSpec = if (isDragging) tween(durationMillis = 180) else tween(durationMillis = 250, delayMillis = 200),
+                label = "thumbAlpha"
+            )
+
+            // 手柄缩放动画
+            val thumbScale by animateFloatAsState(
+                targetValue = if (isDragging) 1.15f else 1f,
+                animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+                label = "thumbScale"
+            )
+
+            // 呼吸光点动画（仅播放中且未拖动时激活）
+            val showBreath = debouncedIsPlaying && !isDragging
+            val breathScale by rememberInfiniteTransition(label = "breath").animateFloat(
+                initialValue = 1f,
+                targetValue = if (showBreath) 1.12f else 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(2000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "breathScale"
+            )
+            val breathAlpha by rememberInfiniteTransition(label = "breathAlpha").animateFloat(
+                initialValue = 0.7f,
+                targetValue = if (showBreath) 1f else 0.7f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(2000, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse
+                ),
+                label = "breathAlpha"
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            isDragging = true
+                            isScrubbing = true
+                            scrubProg = (down.position.x / size.width).coerceIn(0f, 1f)
+                            currentMs = (scrubProg * durationMs).toLong()
+
+                            var previousX = down.position.x
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull() ?: break
+                                if (!change.pressed) {
+                                    change.consume()
+                                    break
+                                }
+                                val dx = change.position.x - previousX
+                                if (kotlin.math.abs(dx) > 0.5f) {
+                                    previousX = change.position.x
+                                }
+                                change.consume()
+                                scrubProg = (change.position.x / size.width).coerceIn(0f, 1f)
+                                currentMs = (scrubProg * durationMs).toLong()
+                            }
+
+                            val targetMs = (scrubProg * durationMs).toLong()
+                            val targetProg = scrubProg
+                            scope.launch {
+                                progressAnim.snapTo(targetProg)
+                                controllerRef.seekTo(targetMs)
+                                delay(50)
+                                isDragging = false
+                                isScrubbing = false
+                            }
+                        }
+                    }
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val y = size.height / 2f
+                    val stroke = Stroke(width = strokeWidth.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+
+                    // 背景轨道
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.22f),
+                        start = Offset(0f, y),
+                        end = Offset(size.width, y),
+                        strokeWidth = strokeWidth.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+
+                    // 已播放轨道
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(0f, y),
+                        end = Offset(size.width * prog, y),
+                        strokeWidth = strokeWidth.toPx(),
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+
+                    // 呼吸光点（仅播放中且未拖动时显示）
+                    if (!isDragging && debouncedIsPlaying) {
+                        drawCircle(
+                            color = Color.White.copy(alpha = breathAlpha * 0.6f),
+                            radius = (strokeWidth.toPx() / 2f + 4.dp.toPx()) * breathScale,
+                            center = Offset(size.width * prog, y)
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = strokeWidth.toPx() / 2f,
+                            center = Offset(size.width * prog, y)
+                        )
+                    }
+
+                    // 拖动手柄
+                    if (thumbAlpha > 0.01f) {
+                        val thumbRadius = 7.dp.toPx() * thumbScale
+                        val thumbX = size.width * prog
+                        drawCircle(
+                            color = Color.Black.copy(alpha = 0.15f * thumbAlpha),
+                            radius = thumbRadius + 3.dp.toPx(),
+                            center = Offset(thumbX, y)
+                        )
+                        drawCircle(
+                            color = Color.White.copy(alpha = thumbAlpha),
+                            radius = thumbRadius,
+                            center = Offset(thumbX, y)
+                        )
+                    }
+                }
+            }
+
+            // 时间文字
             Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween) {
-                Text(formatMs(currentMs),  style = MaterialTheme.typography.labelSmall, color = onBg.copy(alpha = 0.70f))
+                Text(formatMs(currentMs), style = MaterialTheme.typography.labelSmall, color = onBg.copy(alpha = 0.70f))
                 Text(formatMs(durationMs), style = MaterialTheme.typography.labelSmall, color = onBg.copy(alpha = 0.70f))
             }
         }
@@ -450,38 +606,92 @@ internal fun FullPlayer(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment     = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { controller.togglePlayMode() }, Modifier.size(48.dp)) {
+            PressableIcon(
+                onClick = { controller.togglePlayMode() },
+                modifier = Modifier.size(48.dp)
+            ) {
                 Icon(
                     imageVector = when (playMode) {
-                        1 -> Icons.Rounded.RepeatOne      // 单曲循环
-                        2 -> Icons.Rounded.Shuffle         // 随机播放
-                        else -> Icons.Rounded.Repeat       // 循环全部
+                        1 -> Icons.Rounded.RepeatOne
+                        2 -> Icons.Rounded.Shuffle
+                        else -> Icons.Rounded.Repeat
                     },
                     contentDescription = null,
                     modifier = Modifier.size(24.dp),
                     tint = if (playMode != 0) onBg else onBg.copy(alpha = 0.35f)
                 )
             }
-            IconButton(onClick = { controller.skipToPrevious() }, Modifier.size(56.dp)) {
+            PressableIcon(
+                onClick = { controller.skipToPrevious() },
+                modifier = Modifier.size(56.dp)
+            ) {
                 Icon(Icons.Rounded.SkipPrevious, null, Modifier.size(36.dp), tint = onBg)
             }
-            FilledIconButton(
+            PressableIcon(
                 onClick = { controller.togglePlayPause() },
-                modifier = Modifier.size(74.dp),
-                shape    = CircleShape,
-                colors   = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White)
+                modifier = Modifier.size(74.dp)
             ) {
-                Icon(if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, null, Modifier.size(36.dp), tint = Color(0xFF1A1A1A))
+                Crossfade(
+                    targetState = debouncedIsPlaying,
+                    animationSpec = tween(200),
+                    label = "playPause"
+                ) { playing ->
+                    Icon(
+                        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (playing) "暂停" else "播放",
+                        modifier = Modifier.size(40.dp),
+                        tint = Color.White
+                    )
+                }
             }
-            IconButton(onClick = { controller.skipToNext() }, Modifier.size(56.dp)) {
+            PressableIcon(
+                onClick = { controller.skipToNext() },
+                modifier = Modifier.size(56.dp)
+            ) {
                 Icon(Icons.Rounded.SkipNext, null, Modifier.size(36.dp), tint = onBg)
             }
-            IconButton(onClick = { scope.launch { lyricsSlide.animateTo(screenHPx, tween(550, easing = EaseInOutCubic)) } }, Modifier.size(48.dp)) {
+            PressableIcon(
+                onClick = { scope.launch { lyricsSlide.animateTo(screenHPx, tween(550, easing = EaseInOutCubic)) } },
+                modifier = Modifier.size(48.dp)
+            ) {
                 Icon(Icons.Rounded.Lyrics, null, Modifier.size(22.dp), tint = onBg.copy(alpha = 0.55f))
             }
         }
 
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+@Composable
+internal fun PressableIcon(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.88f else 1f,
+        animationSpec = tween(120),
+        label = "pressScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.7f else 1f,
+        animationSpec = tween(120),
+        label = "pressAlpha"
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
     }
 }
 

@@ -151,8 +151,18 @@ class MusicViewModel @Inject constructor(
         playerController.playNext(song)
     }
 
+    /** 将歌曲插入下一首，返回原始位置（-1 表示不在队列中） */
+    fun playNextWithPosition(song: Song): Int {
+        return playerController.playNextWithPosition(song)
+    }
+
+    /** 恢复歌曲到原位置，或移除 */
+    fun restoreFromPlayNext(song: Song, originalIndex: Int) {
+        viewModelScope.launch { playerController.restoreFromPlayNext(song, originalIndex) }
+    }
+
     fun removeFromQueue(songId: String) {
-        playerController.removeFromQueue(songId)
+        viewModelScope.launch { playerController.removeFromQueue(songId) }
     }
 
     fun clearQueue() {

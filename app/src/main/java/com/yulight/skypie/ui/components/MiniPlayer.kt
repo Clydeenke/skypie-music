@@ -133,11 +133,11 @@ fun MiniPlayer(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 播放队列按钮
-                IconButton(onClick = onQueueClick, modifier = Modifier.size(40.dp)) {
+                PressableIcon(onClick = onQueueClick, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.FormatListBulleted, null, Modifier.size(22.dp), tint = iconTint)
                 }
                 // 播放/暂停
-                IconButton(onClick = { viewModel.playerController.togglePlayPause() }, modifier = Modifier.size(48.dp)) {
+                PressableIcon(onClick = { viewModel.playerController.togglePlayPause() }, modifier = Modifier.size(48.dp)) {
                     Icon(
                         imageVector        = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = null,
@@ -146,7 +146,7 @@ fun MiniPlayer(
                     )
                 }
                 // 下一首
-                IconButton(onClick = { viewModel.playerController.skipToNext() }, modifier = Modifier.size(40.dp)) {
+                PressableIcon(onClick = { viewModel.playerController.skipToNext() }, modifier = Modifier.size(40.dp)) {
                     Icon(Icons.Rounded.SkipNext, null, Modifier.size(22.dp), tint = iconTint)
                 }
             }

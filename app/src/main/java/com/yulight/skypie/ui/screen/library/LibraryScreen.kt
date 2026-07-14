@@ -24,6 +24,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +51,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Check
@@ -84,6 +86,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -117,6 +120,7 @@ import com.yulight.skypie.viewmodel.MusicViewModel
 import com.yulight.skypie.viewmodel.SortOrder
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,24 +330,25 @@ fun LibraryScreen(
                                     isSelected         = song.id in selectedIds,
                                     onClick            = {
                                         when {
-                                            // 多选模式：点击 = 切换选中
                                             isMultiSelect -> selectedIds =
                                                 if (song.id in selectedIds) selectedIds - song.id
                                                 else selectedIds + song.id
-                                            // 普通模式：当前歌曲 = 打开播放器
                                             currentSong?.id == song.id -> onOpenPlayer()
                                             else -> onSongClick(songs, index)
                                         }
                                     },
                                     onLongClick = {
-                                        // 长按进入多选并选中该歌曲
                                         if (!isMultiSelect) {
                                             isMultiSelect = true
                                             selectedIds   = setOf(song.id)
                                         }
                                     },
                                     onPlayNext  = { viewModel.playNext(song) },
-                                    onMoreClick = { optionsSong = song }
+                                    onMoreClick = { optionsSong = song },
+                                    currentSongId     = currentSong?.id,
+                                    onRemoveFromQueue = { viewModel.removeFromQueue(it) },
+                                    onPlayNextWithPosition = { viewModel.playNextWithPosition(it) },
+                                    onRestoreFromPlayNext = { s, idx -> viewModel.restoreFromPlayNext(s, idx) }
                                 )
                             }
                         }
@@ -599,7 +604,7 @@ private fun SongOptionsSheet(
                     )
                     Spacer(Modifier.height(4.dp))
                     // 操作选项
-                    OptionRow(Icons.Rounded.SkipNext,   "下一首播放", onClick = onPlayNext)
+                    OptionRow(Icons.Rounded.Add,        "下一首播放", onClick = onPlayNext)
                     OptionRow(Icons.Rounded.QueueMusic, "添加到歌单", onClick = { view = OptionsView.PLAYLIST })
                     OptionRow(Icons.Rounded.Info,       "歌曲信息",   onClick = { view = OptionsView.INFO })
                     OptionRow(Icons.Rounded.Delete,     "删除",       isDestructive = true, onClick = onDelete)
@@ -954,16 +959,130 @@ private fun OptionRow(
 ) {
     val tint = if (isDestructive) MaterialTheme.colorScheme.error
     else               MaterialTheme.colorScheme.onSurface
+    val interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.97f else 1f,
+        animationSpec = tween(120),
+        label = "optionRowScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.75f else 1f,
+        animationSpec = tween(120),
+        label = "optionRowAlpha"
+    )
     Row(
         modifier          = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 20.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(icon, null, tint = tint, modifier = Modifier.size(22.dp))
         Spacer(Modifier.width(18.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, color = tint)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PressableIcon —— 无水波纹按压反馈按钮
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun PressableIcon(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.88f else 1f,
+        animationSpec = tween(120),
+        label = "pressScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (isPressed) 0.7f else 1f,
+        animationSpec = tween(120),
+        label = "pressAlpha"
+    )
+
+    Box(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale; this.alpha = alpha }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AddToNextButton —— 添加到下一首 + 撤销
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun AddToNextButton(
+    song: Song,
+    currentSongId: Long?,
+    onAdd: (Song) -> Int,
+    onRestore: (Song, Int) -> Unit,
+    onRemove: (String) -> Unit
+) {
+    var isAdded by remember(song.id) { mutableStateOf(false) }
+    var originalIndex by remember(song.id) { mutableIntStateOf(-1) }
+
+    LaunchedEffect(currentSongId) {
+        if (currentSongId != null) {
+            isAdded = false
+            originalIndex = -1
+        }
+    }
+
+    LaunchedEffect(isAdded) {
+        if (isAdded) {
+            delay(5000)
+            isAdded = false
+            originalIndex = -1
+        }
+    }
+
+    Crossfade(
+        targetState = isAdded,
+        animationSpec = tween(180),
+        label = "addToNextIcon"
+    ) { added ->
+        PressableIcon(
+            onClick = {
+                if (added) {
+                    if (originalIndex >= 0) {
+                        onRestore(song, originalIndex)
+                    } else {
+                        onRemove(song.id.toString())
+                    }
+                    isAdded = false
+                    originalIndex = -1
+                } else {
+                    originalIndex = onAdd(song)
+                    isAdded = true
+                }
+            },
+            modifier = Modifier.size(38.dp)
+        ) {
+            Icon(
+                imageVector = if (added) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.Add,
+                contentDescription = if (added) "撤销添加" else "添加到下一首播放",
+                modifier = Modifier.size(20.dp),
+                tint = if (added) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+            )
+        }
     }
 }
 
@@ -1257,6 +1376,10 @@ private fun SongListItem(
     onLongClick        : () -> Unit,
     onPlayNext         : () -> Unit,
     onMoreClick        : () -> Unit,
+    currentSongId      : Long? = null,
+    onRemoveFromQueue  : (String) -> Unit = {},
+    onPlayNextWithPosition : (Song) -> Int = { -1 },
+    onRestoreFromPlayNext  : (Song, Int) -> Unit = { _, _ -> },
 ) {
     val scale by animateFloatAsState(
         targetValue   = if (isCurrentlyPlaying) 1.02f else 1f,
@@ -1357,20 +1480,18 @@ private fun SongListItem(
                 exit    = fadeOut(tween(100))
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 下一首播放
-                    IconButton(
-                        onClick  = onPlayNext,
-                        modifier = Modifier.size(38.dp)
-                    ) {
-                        Icon(
-                            imageVector        = Icons.Rounded.SkipNext,
-                            contentDescription = "下一首播放",
-                            modifier           = Modifier.size(20.dp),
-                            tint               = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                    // 下一首播放 + 撤销（当前歌曲隐藏）
+                    if (song.id != currentSongId) {
+                        AddToNextButton(
+                            song = song,
+                            currentSongId = currentSongId,
+                            onAdd = { onPlayNextWithPosition(it) },
+                            onRestore = onRestoreFromPlayNext,
+                            onRemove = onRemoveFromQueue
                         )
                     }
                     // 更多选项（竖三点）
-                    IconButton(
+                    PressableIcon(
                         onClick  = onMoreClick,
                         modifier = Modifier.size(38.dp)
                     ) {

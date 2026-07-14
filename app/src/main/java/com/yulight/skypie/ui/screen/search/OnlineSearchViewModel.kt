@@ -50,7 +50,7 @@ class OnlineSearchViewModel @Inject constructor(
             return when (saved) {
                 "high" -> AudioQuality.High
                 "lossless" -> AudioQuality.Lossless
-                else -> playQuality
+                else -> AudioQuality.Standard
             }
         }
 
