@@ -1,5 +1,6 @@
-package com.yulight.skypie.ui.screen.search
+package com.yulight.skypie.ui.screen.online.search
 
+import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
@@ -35,6 +36,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private const val PREFS_SEARCH_HISTORY = "online_search_history"
+private const val KEY_SEARCH_HISTORY = "history"
+private const val MAX_HISTORY_SIZE = 20
+
+private fun loadSearchHistory(context: Context): List<String> {
+    val prefs = context.getSharedPreferences(PREFS_SEARCH_HISTORY, Context.MODE_PRIVATE)
+    val historyStr = prefs.getString(KEY_SEARCH_HISTORY, "") ?: ""
+    return if (historyStr.isBlank()) emptyList()
+    else historyStr.split(",").filter { it.isNotBlank() }
+}
+
+private fun saveSearchHistory(context: Context, query: String, history: MutableList<String>) {
+    history.remove(query)
+    history.add(0, query)
+    if (history.size > MAX_HISTORY_SIZE) {
+        history.removeAt(history.lastIndex)
+    }
+    val prefs = context.getSharedPreferences(PREFS_SEARCH_HISTORY, Context.MODE_PRIVATE)
+    prefs.edit().putString(KEY_SEARCH_HISTORY, history.joinToString(",")).apply()
+}
+
+private fun clearSearchHistory(context: Context) {
+    val prefs = context.getSharedPreferences(PREFS_SEARCH_HISTORY, Context.MODE_PRIVATE)
+    prefs.edit().remove(KEY_SEARCH_HISTORY).apply()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnlineSearchScreen(
@@ -46,21 +73,46 @@ fun OnlineSearchScreen(
     val context    = LocalContext.current
     val scope      = rememberCoroutineScope()
 
-    val searchQuery     by viewModel.searchQuery.collectAsStateWithLifecycle()
-    val kuwoResults     by viewModel.kuwoResults.collectAsStateWithLifecycle()
-    val kugouResults    by viewModel.kugouResults.collectAsStateWithLifecycle()
-    val kuwoSearching   by viewModel.kuwoSearching.collectAsStateWithLifecycle()
-    val kugouSearching  by viewModel.kugouSearching.collectAsStateWithLifecycle()
-    val kuwoError       by viewModel.kuwoError.collectAsStateWithLifecycle()
-    val kugouError      by viewModel.kugouError.collectAsStateWithLifecycle()
-    val rankSongs       by viewModel.rankSongs.collectAsStateWithLifecycle()
-    val rankLoading     by viewModel.rankLoading.collectAsStateWithLifecycle()
-    val rankLoadingMore by viewModel.rankLoadingMore.collectAsStateWithLifecycle()
-    val currentRankIdx  by viewModel.currentRankIndex.collectAsStateWithLifecycle()
-    val downloadStates  by viewModel.downloadStates.collectAsStateWithLifecycle()
-    val playStates      by viewModel.playStates.collectAsStateWithLifecycle()
-    val kuwoLoadingMore  by viewModel.kuwoLoadingMore.collectAsStateWithLifecycle()
-    val kugouLoadingMore by viewModel.kugouLoadingMore.collectAsStateWithLifecycle()
+    val searchQuery       by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val kuwoResults       by viewModel.kuwoResults.collectAsStateWithLifecycle()
+    val kugouResults      by viewModel.kugouResults.collectAsStateWithLifecycle()
+    val neteaseResults    by viewModel.neteaseResults.collectAsStateWithLifecycle()
+    val qqResults         by viewModel.qqResults.collectAsStateWithLifecycle()
+    val kuwoSearching     by viewModel.kuwoSearching.collectAsStateWithLifecycle()
+    val kugouSearching    by viewModel.kugouSearching.collectAsStateWithLifecycle()
+    val neteaseSearching  by viewModel.neteaseSearching.collectAsStateWithLifecycle()
+    val qqSearching       by viewModel.qqSearching.collectAsStateWithLifecycle()
+    val kuwoError         by viewModel.kuwoError.collectAsStateWithLifecycle()
+    val kugouError        by viewModel.kugouError.collectAsStateWithLifecycle()
+    val neteaseError      by viewModel.neteaseError.collectAsStateWithLifecycle()
+    val qqError           by viewModel.qqError.collectAsStateWithLifecycle()
+    val rankSongs         by viewModel.rankSongs.collectAsStateWithLifecycle()
+    val rankLoading       by viewModel.rankLoading.collectAsStateWithLifecycle()
+    val rankLoadingMore   by viewModel.rankLoadingMore.collectAsStateWithLifecycle()
+    val currentRankIdx    by viewModel.currentRankIndex.collectAsStateWithLifecycle()
+    val downloadStates    by viewModel.downloadStates.collectAsStateWithLifecycle()
+    val playStates        by viewModel.playStates.collectAsStateWithLifecycle()
+    val kuwoLoadingMore   by viewModel.kuwoLoadingMore.collectAsStateWithLifecycle()
+    val kugouLoadingMore  by viewModel.kugouLoadingMore.collectAsStateWithLifecycle()
+    val neteaseLoadingMore by viewModel.neteaseLoadingMore.collectAsStateWithLifecycle()
+    val qqLoadingMore     by viewModel.qqLoadingMore.collectAsStateWithLifecycle()
+
+    // 搜索历史状态
+    val searchHistory = remember { mutableStateListOf<String>() }
+    var hasSearched by remember { mutableStateOf(false) }
+
+    // 加载搜索历史
+    LaunchedEffect(Unit) {
+        searchHistory.clear()
+        searchHistory.addAll(loadSearchHistory(context))
+    }
+
+    // 退出时重置搜索状态
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.setSearchQuery("")
+        }
+    }
 
     // 预加载搜索结果封面
     LaunchedEffect(kuwoResults) {
@@ -135,14 +187,6 @@ fun OnlineSearchScreen(
     val tabs       = MusicSource.entries.map { it.displayName }
     val pagerState = rememberPagerState(pageCount = { tabs.size })
 
-    // 搜索框变化时触发当前 Tab 搜索
-    LaunchedEffect(searchQuery) {
-        if (searchQuery.isNotBlank()) {
-            kotlinx.coroutines.delay(500)
-            viewModel.search(pagerState.currentPage)
-        }
-    }
-
     // 切换 Tab 时，如果该 Tab 还没搜过就补搜一次
     LaunchedEffect(pagerState.currentPage) {
         if (searchQuery.isNotBlank()) viewModel.search(pagerState.currentPage)
@@ -176,7 +220,10 @@ fun OnlineSearchScreen(
                     shape         = RoundedCornerShape(24.dp),
                     trailingIcon  = {
                         if (searchQuery.isNotBlank())
-                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
+                            IconButton(onClick = {
+                                viewModel.setSearchQuery("")
+                                hasSearched = false
+                            }) {
                                 Icon(Icons.Rounded.Clear, null)
                             }
                     },
@@ -184,105 +231,149 @@ fun OnlineSearchScreen(
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                     )
                 )
-                IconButton(onClick = { viewModel.search(pagerState.currentPage) }) {
+                IconButton(
+                    onClick = {
+                        if (searchQuery.isNotBlank()) {
+                            saveSearchHistory(context, searchQuery, searchHistory)
+                            hasSearched = true
+                        }
+                        viewModel.search(pagerState.currentPage)
+                    },
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                ) {
                     Icon(Icons.Rounded.Search, "搜索", tint = MaterialTheme.colorScheme.primary)
                 }
             }
 
             // ── 探索 / 搜索结果 ───────────────────────────────────────────────
             Crossfade(
-                targetState   = searchQuery.isBlank(),
+                targetState   = !hasSearched,
                 animationSpec = tween(400),
                 label         = "search_mode"
             ) { isExplore ->
                 if (isExplore) {
-                    // 榜单模式
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        ScrollableTabRow(
-                            selectedTabIndex = currentRankIdx,
-                            edgePadding      = 16.dp,
-                            containerColor   = Color.Transparent,
-                            divider          = {}
-                        ) {
-                            KUWO_RANKS.forEachIndexed { i, rank ->
-                                Tab(
-                                    selected = currentRankIdx == i,
-                                    onClick  = { viewModel.setRankIndex(i) },
-                                    text     = {
-                                        Text(
-                                            text       = rank.name,
-                                            style      = MaterialTheme.typography.titleMedium,
-                                            fontWeight = if (currentRankIdx == i) FontWeight.Bold else FontWeight.Normal
-                                        )
-                                    },
-                                    selectedContentColor   = MaterialTheme.colorScheme.primary,
-                                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    // 搜索历史
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    ) {
+                        if (searchHistory.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "搜索历史",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "清除",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.clickable {
+                                        clearSearchHistory(context)
+                                        searchHistory.clear()
+                                    }
                                 )
                             }
-                        }
 
-                        if (rankLoading) {
-                            Box(Modifier.fillMaxSize(), Alignment.Center) { CircularProgressIndicator() }
-                        } else {
-                            LazyColumn(
-                                modifier      = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(bottom = 108.dp, top = 8.dp)
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                itemsIndexed(rankSongs, key = { _, s -> s.id }) { index, song ->
-                                    if (index == rankSongs.lastIndex) {
-                                        SideEffect { viewModel.loadMoreRank() }
-                                    }
-                                    SongListItem(
-                                        song          = song,
-                                        downloadState = downloadStates[song.id] ?: DownloadState.Idle,
-                                        playState     = playStates[song.id]     ?: PlayState.Idle,
-                                        onDownload    = { songForDownload = song },
-                                        onPlay        = {
-                                            viewModel.play(rankSongs, index, onOpenPlayer, ::showNoApiToast)
+                                searchHistory.forEach { query ->
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.clickable(
+                                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            viewModel.setSearchQuery(query)
+                                            viewModel.clearAllResults()
+                                            hasSearched = true
+                                            viewModel.search(pagerState.currentPage)
                                         }
-                                    )
-                                    if (index < rankSongs.lastIndex) {
-                                        HorizontalDivider(
-                                            modifier  = Modifier.padding(start = 74.dp),
-                                            thickness = 0.5.dp,
-                                            color     = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = query,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                                         )
                                     }
                                 }
-                                // 加载更多指示器
-                                if (rankLoadingMore) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            CircularProgressIndicator(
-                                                modifier = Modifier.size(24.dp),
-                                                strokeWidth = 2.dp
-                                            )
-                                        }
-                                    }
-                                }
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "输入关键词搜索歌曲",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 } else {
                     // 搜索结果模式
                     Column(modifier = Modifier.fillMaxSize()) {
-                        TabRow(selectedTabIndex = pagerState.currentPage) {
+                        // 圆角Tab（无水波效果）
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             tabs.forEachIndexed { i, title ->
-                                Tab(
-                                    selected = pagerState.currentPage == i,
-                                    onClick  = { scope.launch { pagerState.animateScrollToPage(i) } },
-                                    text     = { Text(title) }
-                                )
+                                val isSelected = pagerState.currentPage == i
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                        )
+                                        .clickable(
+                                            interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                                            indication = null
+                                        ) {
+                                            scope.launch { pagerState.scrollToPage(i) }
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                                ) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary
+                                               else MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
                             }
                         }
 
                         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                            val isLoading = if (page == 0) kuwoSearching else kugouSearching
-                            val error     = if (page == 0) kuwoError     else kugouError
-                            val results   = if (page == 0) kuwoResults   else kugouResults
+                            val isLoading = when (page) {
+                                0 -> kuwoSearching; 1 -> kugouSearching
+                                2 -> neteaseSearching; 3 -> qqSearching
+                                else -> false
+                            }
+                            val error = when (page) {
+                                0 -> kuwoError; 1 -> kugouError
+                                2 -> neteaseError; 3 -> qqError
+                                else -> null
+                            }
+                            val results = when (page) {
+                                0 -> kuwoResults; 1 -> kugouResults
+                                2 -> neteaseResults; 3 -> qqResults
+                                else -> emptyList()
+                            }
 
                             Box(Modifier.fillMaxSize()) {
                                 when {
@@ -322,8 +413,12 @@ fun OnlineSearchScreen(
                                         itemsIndexed(results, key = { _, s -> s.id }) { index, song ->
                                             if (index == results.lastIndex) {
                                                 SideEffect {
-                                                    if (page == 0) viewModel.loadMoreKuwo()
-                                                    else viewModel.loadMoreKugou()
+                                                    when (page) {
+                                                        0 -> viewModel.loadMoreKuwo()
+                                                        1 -> viewModel.loadMoreKugou()
+                                                        2 -> viewModel.loadMoreNetease()
+                                                        3 -> viewModel.loadMoreQQ()
+                                                    }
                                                 }
                                             }
                                             SongListItem(
@@ -426,7 +521,7 @@ fun OnlineSearchScreen(
 // ── 歌曲列表条目（纯 UI，无业务逻辑） ────────────────────────────────────────
 
 @Composable
-private fun SongListItem(
+fun SongListItem(
     song          : OnlineSong,
     downloadState : DownloadState,
     playState     : PlayState,
@@ -506,4 +601,4 @@ private fun SongListItem(
     }
 }
 
-private fun formatSeconds(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)
+fun formatSeconds(sec: Int): String = "%d:%02d".format(sec / 60, sec % 60)

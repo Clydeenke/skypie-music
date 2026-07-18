@@ -1,4 +1,4 @@
-package com.yulight.skypie.ui.screen.search
+package com.yulight.skypie.ui.screen.online.search
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
@@ -60,41 +60,75 @@ class OnlineSearchViewModel @Inject constructor(
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
     // 每个 Tab 独立维护搜索结果状态
-    private val _kuwoResults  = MutableStateFlow<List<OnlineSong>>(emptyList())
-    private val _kugouResults = MutableStateFlow<List<OnlineSong>>(emptyList())
-    val kuwoResults : StateFlow<List<OnlineSong>> = _kuwoResults.asStateFlow()
-    val kugouResults: StateFlow<List<OnlineSong>> = _kugouResults.asStateFlow()
+    private val _kuwoResults    = MutableStateFlow<List<OnlineSong>>(emptyList())
+    private val _kugouResults   = MutableStateFlow<List<OnlineSong>>(emptyList())
+    private val _neteaseResults = MutableStateFlow<List<OnlineSong>>(emptyList())
+    private val _qqResults      = MutableStateFlow<List<OnlineSong>>(emptyList())
+    val kuwoResults    : StateFlow<List<OnlineSong>> = _kuwoResults.asStateFlow()
+    val kugouResults   : StateFlow<List<OnlineSong>> = _kugouResults.asStateFlow()
+    val neteaseResults : StateFlow<List<OnlineSong>> = _neteaseResults.asStateFlow()
+    val qqResults      : StateFlow<List<OnlineSong>> = _qqResults.asStateFlow()
 
-    private val _kuwoSearching  = MutableStateFlow(false)
-    private val _kugouSearching = MutableStateFlow(false)
-    val kuwoSearching : StateFlow<Boolean> = _kuwoSearching.asStateFlow()
-    val kugouSearching: StateFlow<Boolean> = _kugouSearching.asStateFlow()
+    private val _kuwoSearching    = MutableStateFlow(false)
+    private val _kugouSearching   = MutableStateFlow(false)
+    private val _neteaseSearching = MutableStateFlow(false)
+    private val _qqSearching      = MutableStateFlow(false)
+    val kuwoSearching    : StateFlow<Boolean> = _kuwoSearching.asStateFlow()
+    val kugouSearching   : StateFlow<Boolean> = _kugouSearching.asStateFlow()
+    val neteaseSearching : StateFlow<Boolean> = _neteaseSearching.asStateFlow()
+    val qqSearching      : StateFlow<Boolean> = _qqSearching.asStateFlow()
 
-    private val _kuwoError  = MutableStateFlow<String?>(null)
-    private val _kugouError = MutableStateFlow<String?>(null)
-    val kuwoError : StateFlow<String?> = _kuwoError.asStateFlow()
-    val kugouError: StateFlow<String?> = _kugouError.asStateFlow()
+    private val _kuwoError    = MutableStateFlow<String?>(null)
+    private val _kugouError   = MutableStateFlow<String?>(null)
+    private val _neteaseError = MutableStateFlow<String?>(null)
+    private val _qqError      = MutableStateFlow<String?>(null)
+    val kuwoError    : StateFlow<String?> = _kuwoError.asStateFlow()
+    val kugouError   : StateFlow<String?> = _kugouError.asStateFlow()
+    val neteaseError : StateFlow<String?> = _neteaseError.asStateFlow()
+    val qqError      : StateFlow<String?> = _qqError.asStateFlow()
 
     // 搜索分页状态
-    private val _kuwoPage = MutableStateFlow(1)
-    private val _kugouPage = MutableStateFlow(1)
-    private val _kuwoLoadingMore = MutableStateFlow(false)
-    private val _kugouLoadingMore = MutableStateFlow(false)
-    private val _kuwoLoadedPages = mutableSetOf<Int>()
-    private val _kugouLoadedPages = mutableSetOf<Int>()
-    val kuwoLoadingMore: StateFlow<Boolean> = _kuwoLoadingMore.asStateFlow()
-    val kugouLoadingMore: StateFlow<Boolean> = _kugouLoadingMore.asStateFlow()
+    private val _kuwoPage    = MutableStateFlow(1)
+    private val _kugouPage   = MutableStateFlow(1)
+    private val _neteasePage = MutableStateFlow(1)
+    private val _qqPage      = MutableStateFlow(1)
+    private val _kuwoLoadingMore    = MutableStateFlow(false)
+    private val _kugouLoadingMore   = MutableStateFlow(false)
+    private val _neteaseLoadingMore = MutableStateFlow(false)
+    private val _qqLoadingMore      = MutableStateFlow(false)
+    private val _kuwoLoadedPages    = mutableSetOf<Int>()
+    private val _kugouLoadedPages   = mutableSetOf<Int>()
+    private val _neteaseLoadedPages = mutableSetOf<Int>()
+    private val _qqLoadedPages      = mutableSetOf<Int>()
+    val kuwoLoadingMore    : StateFlow<Boolean> = _kuwoLoadingMore.asStateFlow()
+    val kugouLoadingMore   : StateFlow<Boolean> = _kugouLoadingMore.asStateFlow()
+    val neteaseLoadingMore : StateFlow<Boolean> = _neteaseLoadingMore.asStateFlow()
+    val qqLoadingMore      : StateFlow<Boolean> = _qqLoadingMore.asStateFlow()
 
     fun setSearchQuery(q: String) { _searchQuery.value = q }
 
-    /** 搜索指定 Tab（0=酷我, 1=酷狗），已加载则跳过 */
+    /** 清空所有搜索结果 */
+    fun clearAllResults() {
+        _kuwoResults.value = emptyList()
+        _kugouResults.value = emptyList()
+        _neteaseResults.value = emptyList()
+        _qqResults.value = emptyList()
+        _lastKuwoQuery = ""
+        _lastKugouQuery = ""
+        _lastNeteaseQuery = ""
+        _lastQQQuery = ""
+    }
+
+    /** 搜索指定 Tab（0=酷我, 1=酷狗, 2=网易云, 3=QQ），已加载则跳过 */
     fun search(tabIndex: Int) {
         val q = _searchQuery.value.trim()
         if (q.isBlank()) return
         // 检查是否已加载过相同关键词
         val alreadyLoaded = when (tabIndex) {
-            0 -> _kuwoResults.value.isNotEmpty() && _searchQuery.value == _lastKuwoQuery
-            1 -> _kugouResults.value.isNotEmpty() && _searchQuery.value == _lastKugouQuery
+            0 -> _kuwoResults.value.isNotEmpty() && q == _lastKuwoQuery
+            1 -> _kugouResults.value.isNotEmpty() && q == _lastKugouQuery
+            2 -> _neteaseResults.value.isNotEmpty() && q == _lastNeteaseQuery
+            3 -> _qqResults.value.isNotEmpty() && q == _lastQQQuery
             else -> false
         }
         if (alreadyLoaded) return
@@ -104,38 +138,52 @@ class OnlineSearchViewModel @Inject constructor(
                 0 -> {
                     _kuwoSearching.value = true; _kuwoError.value = null
                     _kuwoResults.value = emptyList()
-                    _kuwoPage.value = 1
-                    _kuwoLoadedPages.clear()
+                    _kuwoPage.value = 1; _kuwoLoadedPages.clear()
                     try {
-                        val results = repository.search(q, MusicSource.KUWO)
-                        _kuwoResults.value = results
-                        _kuwoLoadedPages.add(1)
-                        _lastKuwoQuery = q
-                    }
-                    catch (e: Exception) { _kuwoError.value = "搜索失败：${e.message}" }
+                        _kuwoResults.value = repository.search(q, MusicSource.KUWO)
+                        _kuwoLoadedPages.add(1); _lastKuwoQuery = q
+                    } catch (e: Exception) { _kuwoError.value = "搜索失败：${e.message}" }
                     finally { _kuwoSearching.value = false }
                 }
                 1 -> {
                     _kugouSearching.value = true; _kugouError.value = null
                     _kugouResults.value = emptyList()
-                    _kugouPage.value = 1
-                    _kugouLoadedPages.clear()
+                    _kugouPage.value = 1; _kugouLoadedPages.clear()
                     try {
-                        val results = repository.search(q, MusicSource.KUGOU)
-                        _kugouResults.value = results
-                        _kugouLoadedPages.add(1)
-                        _lastKugouQuery = q
-                    }
-                    catch (e: Exception) { _kugouError.value = "搜索失败：${e.message}" }
+                        _kugouResults.value = repository.search(q, MusicSource.KUGOU)
+                        _kugouLoadedPages.add(1); _lastKugouQuery = q
+                    } catch (e: Exception) { _kugouError.value = "搜索失败：${e.message}" }
                     finally { _kugouSearching.value = false }
+                }
+                2 -> {
+                    _neteaseSearching.value = true; _neteaseError.value = null
+                    _neteaseResults.value = emptyList()
+                    _neteasePage.value = 1; _neteaseLoadedPages.clear()
+                    try {
+                        _neteaseResults.value = repository.search(q, MusicSource.NETEASE)
+                        _neteaseLoadedPages.add(1); _lastNeteaseQuery = q
+                    } catch (e: Exception) { _neteaseError.value = "搜索失败：${e.message}" }
+                    finally { _neteaseSearching.value = false }
+                }
+                3 -> {
+                    _qqSearching.value = true; _qqError.value = null
+                    _qqResults.value = emptyList()
+                    _qqPage.value = 1; _qqLoadedPages.clear()
+                    try {
+                        _qqResults.value = repository.search(q, MusicSource.QQ)
+                        _qqLoadedPages.add(1); _lastQQQuery = q
+                    } catch (e: Exception) { _qqError.value = "搜索失败：${e.message}" }
+                    finally { _qqSearching.value = false }
                 }
             }
         }
     }
 
     // 记录上次搜索的关键词，用于判断是否需要重新搜索
-    private var _lastKuwoQuery = ""
-    private var _lastKugouQuery = ""
+    private var _lastKuwoQuery    = ""
+    private var _lastKugouQuery   = ""
+    private var _lastNeteaseQuery = ""
+    private var _lastQQQuery      = ""
 
     fun loadMoreKuwo() {
         if (_kuwoLoadingMore.value || _kuwoSearching.value) return
@@ -176,7 +224,6 @@ class OnlineSearchViewModel @Inject constructor(
                     _kugouResults.value = _kugouResults.value + newSongs
                     _kugouPage.value = nextPage
                     _kugouLoadedPages.add(nextPage)
-                    // 同步更新 PlayerController 的在线歌曲列表
                     if (playerController.isOnlineMode.value) {
                         playerController.onlineSongs = _kugouResults.value
                         prefetchNewSongsLyrics(newSongs)
@@ -187,48 +234,95 @@ class OnlineSearchViewModel @Inject constructor(
         }
     }
 
+    fun loadMoreNetease() {
+        if (_neteaseLoadingMore.value || _neteaseSearching.value) return
+        val nextPage = _neteasePage.value + 1
+        if (_neteaseLoadedPages.contains(nextPage)) return
+        viewModelScope.launch {
+            _neteaseLoadingMore.value = true
+            delay(1000)
+            try {
+                val q = _searchQuery.value.trim()
+                val newSongs = repository.search(q, MusicSource.NETEASE, nextPage)
+                if (newSongs.isNotEmpty()) {
+                    _neteaseResults.value = _neteaseResults.value + newSongs
+                    _neteasePage.value = nextPage
+                    _neteaseLoadedPages.add(nextPage)
+                    if (playerController.isOnlineMode.value) {
+                        playerController.onlineSongs = _neteaseResults.value
+                        prefetchNewSongsLyrics(newSongs)
+                    }
+                }
+            } catch (_: Exception) {}
+            _neteaseLoadingMore.value = false
+        }
+    }
+
+    fun loadMoreQQ() {
+        if (_qqLoadingMore.value || _qqSearching.value) return
+        val nextPage = _qqPage.value + 1
+        if (_qqLoadedPages.contains(nextPage)) return
+        viewModelScope.launch {
+            _qqLoadingMore.value = true
+            delay(1000)
+            try {
+                val q = _searchQuery.value.trim()
+                val newSongs = repository.search(q, MusicSource.QQ, nextPage)
+                if (newSongs.isNotEmpty()) {
+                    _qqResults.value = _qqResults.value + newSongs
+                    _qqPage.value = nextPage
+                    _qqLoadedPages.add(nextPage)
+                    if (playerController.isOnlineMode.value) {
+                        playerController.onlineSongs = _qqResults.value
+                        prefetchNewSongsLyrics(newSongs)
+                    }
+                }
+            } catch (_: Exception) {}
+            _qqLoadingMore.value = false
+        }
+    }
+
     // ── 榜单 ──────────────────────────────────────────────────────────────────
 
     private val _currentRankIndex = MutableStateFlow(0)
     val currentRankIndex: StateFlow<Int> = _currentRankIndex.asStateFlow()
 
     private val _rankSongs    = MutableStateFlow<List<OnlineSong>>(emptyList())
-    private val _rankLoading  = MutableStateFlow(true)
+    private val _rankLoading  = MutableStateFlow(false)
     private val _rankPage     = MutableStateFlow(1)
     private val _rankLoadingMore = MutableStateFlow(false)
-    private val _rankLoadedPages = mutableSetOf<Int>()  // 已加载的页码
+    private val _rankLoadedPages = mutableSetOf<Int>()
+    // 缓存已加载的榜单数据
+    private val rankCache = mutableMapOf<Int, List<OnlineSong>>()
     val rankSongs      : StateFlow<List<OnlineSong>> = _rankSongs.asStateFlow()
     val rankLoading    : StateFlow<Boolean>          = _rankLoading.asStateFlow()
     val rankLoadingMore: StateFlow<Boolean>          = _rankLoadingMore.asStateFlow()
 
-    init {
-        // 榜单切换时自动重新加载
+    fun setRankIndex(index: Int) {
+        _currentRankIndex.value = index
+        // 加载榜单数据（Repository层有缓存）
         viewModelScope.launch {
-            _currentRankIndex.collect { index ->
-                _rankLoading.value = true
-                _rankPage.value    = 1
-                _rankLoadedPages.clear()
-                _rankSongs.value   = emptyList()
-                val songs = repository.fetchRank(KUWO_RANKS[index].id, 1)
+            _rankLoading.value = true
+            _rankPage.value = 1
+            _rankLoadedPages.clear()
+            try {
+                val songs = repository.fetchRankWithCache(KUWO_RANKS[index].id, 1)
                 _rankSongs.value = songs
                 _rankLoadedPages.add(1)
-                _rankLoading.value = false
-            }
+            } catch (_: Exception) {}
+            _rankLoading.value = false
         }
     }
-
-    fun setRankIndex(index: Int) { _currentRankIndex.value = index }
 
     fun loadMoreRank() {
         if (_rankLoadingMore.value || _rankLoading.value) return
         val nextPage = _rankPage.value + 1
-        if (_rankLoadedPages.contains(nextPage)) return  // 已加载过，跳过
+        if (_rankLoadedPages.contains(nextPage)) return
         viewModelScope.launch {
             _rankLoadingMore.value = true
-            // 先延迟1秒显示加载动画，再发起请求
             delay(1000)
             try {
-                val newSongs = repository.fetchRank(
+                val newSongs = repository.fetchRankWithCache(
                     KUWO_RANKS[_currentRankIndex.value].id,
                     nextPage
                 )
@@ -236,10 +330,8 @@ class OnlineSearchViewModel @Inject constructor(
                     _rankSongs.value = _rankSongs.value + newSongs
                     _rankPage.value = nextPage
                     _rankLoadedPages.add(nextPage)
-                    // 同步更新 PlayerController 的在线歌曲列表
                     if (playerController.isOnlineMode.value) {
                         playerController.onlineSongs = _rankSongs.value
-                        // 预取新加载歌曲的歌词
                         prefetchNewSongsLyrics(newSongs)
                     }
                 }
@@ -429,7 +521,12 @@ class OnlineSearchViewModel @Inject constructor(
                     updateDownloadState(song.id, DownloadState.Error("该音质暂时不可用"))
                     return@launch
                 }
-                val lrcText = try { repository.fetchLyric(song) } catch (_: Exception) { "" }
+                // 获取歌词：优先获取逐字歌词，失败则获取标准歌词
+                val lrcText = try {
+                    val wordByWord = com.yulight.skypie.util.LyricsSearcher.searchLyrics(song.title, song.artist)
+                    if (!wordByWord.isNullOrBlank()) wordByWord
+                    else repository.fetchLyric(song)
+                } catch (_: Exception) { "" }
                 downloadManager.enqueue(
                     com.yulight.skypie.data.model.DownloadTask(
                         id = song.id,

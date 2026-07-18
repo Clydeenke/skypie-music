@@ -10,6 +10,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -122,6 +124,10 @@ fun LyricsScreen(
 ) {
     val listState = rememberLazyListState()
     val density   = LocalDensity.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val enableKaraoke = remember {
+        context.getSharedPreferences("skypie_settings", 0).getBoolean("enable_karaoke", false)
+    }
 
     // contentPadding top = HALF_SCREEN_PAD，转成 px 供滚动计算用
     val contentPadTopPx = remember(density) {
@@ -154,7 +160,7 @@ fun LyricsScreen(
         }
     }
 
-    // ── 用户滑动状态 ──────────────────────────────────────────────────────────
+    // ── 用户滑动状态（仅用于自动滚动控制） ────────────────────────────────────
     var isUserScrolskypie  by remember { mutableStateOf(false) }
     var lastUserScrollMs by remember { mutableLongStateOf(0L) }
 
@@ -206,7 +212,7 @@ fun LyricsScreen(
     }
 
     val onBg    = Color.White
-    val primary = Color.White  // 高亮行也用白色，加粗就够醒目了
+    val primary = Color.White
 
     if (lrcLines.isEmpty()) {
         Text(
@@ -271,21 +277,9 @@ fun LyricsScreen(
             itemsIndexed(items = lrcLines, key = { idx, _ -> idx }) { index, line ->
                 val isCurrent = index == currentLineIndex
                 val dist      = abs(index - currentLineIndex)
-                val expanding = isUserScrolskypie && (index in visibleIndices)
 
-                val targetScale = when {
-                    expanding -> 1.00f
-                    dist == 0 -> 1.00f
-                    dist == 1 -> 0.91f
-                    dist == 2 -> 0.83f
-                    else      -> 0.75f
-                }
-                val scale by animateFloatAsState(
-                    targetValue = targetScale, animationSpec = tween(700), label = "s$index"
-                )
-
+                // 透明度：当前行最亮，越远越暗
                 val targetAlpha = when {
-                    expanding -> 0.85f
                     dist == 0 -> 1.00f
                     dist == 1 -> 0.55f
                     dist == 2 -> 0.28f
@@ -295,37 +289,134 @@ fun LyricsScreen(
                     targetValue = targetAlpha, animationSpec = tween(700), label = "a$index"
                 )
 
-                Text(
-                    text  = line.text,
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
-                    ),
-                    color     = if (isCurrent) primary else onBg,
-                    textAlign = TextAlign.Start,
-                    modifier  = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            // 立刻阻断自动回滚（防止先跳到当前行再重定向）
-                            isUserScrolskypie  = true
-                            lastUserScrollMs = System.currentTimeMillis()
-                            onSeekTo(line.timeMs)
-                            // 先取消之前的延迟任务
-                            clickResumeJob?.cancel()
-                            // 500ms 后恢复自动跟踪，此时 currentLineIndex 已更新为 seek 后的行
-                            clickResumeJob = coroutineScope.launch {
-                                delay(500L)
-                                isUserScrolskypie  = false
-                                lastUserScrollMs = 0L
+                // 判断是否为逐字歌词
+                val hasWords = line.words.isNotEmpty()
+
+                if (hasWords && enableKaraoke) {
+                    // 逐字歌词
+                    // 高亮保持逻辑：播放过的行保持高亮，直到当前行之后第3行开始播放才消失
+                    val isCurrentLine = index == currentLineIndex
+                    val isPastLine = index < currentLineIndex
+
+                    // 找当前行之后第3行的开始时间
+                    val fadeOutThresholdMs = remember(currentLineIndex, lrcLines) {
+                        val futureIdx = (currentLineIndex + 3).coerceAtMost(lrcLines.lastIndex)
+                        lrcLines.getOrNull(futureIdx)?.timeMs ?: Long.MAX_VALUE
+                    }
+
+                    val shouldKeepHighlight = when {
+                        isCurrentLine -> true
+                        isPastLine -> currentMs < fadeOutThresholdMs
+                        else -> false
+                    }
+
+                    val lineCurrentMs = when {
+                        isCurrentLine -> currentMs
+                        shouldKeepHighlight -> {
+                            // 保持满格高亮
+                            val lastWord = line.words.lastOrNull()
+                            if (lastWord != null) lastWord.startMs + lastWord.durationMs + 1 else -1L
+                        }
+                        else -> -1L
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                isUserScrolskypie = true
+                                lastUserScrollMs = System.currentTimeMillis()
+                                onSeekTo(line.timeMs)
+                                clickResumeJob?.cancel()
+                                clickResumeJob = coroutineScope.launch {
+                                    delay(500L)
+                                    isUserScrolskypie = false
+                                    lastUserScrollMs = 0L
+                                }
                             }
+                            .padding(vertical = 4.dp)
+                            .graphicsLayer { this.alpha = alpha }
+                    ) {
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            if (shouldKeepHighlight) {
+                                KaraokeGlow(
+                                    text = line.text,
+                                    words = line.words,
+                                    currentMs = lineCurrentMs,
+                                    primaryColor = primary,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                            KaraokeLineCanvas(
+                                text = line.text,
+                                words = line.words,
+                                currentMs = lineCurrentMs,
+                                primaryColor = primary,
+                                defaultColor = onBg,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                        .padding(vertical = 4.dp)
-                        .graphicsLayer {
-                            scaleX          = scale
-                            scaleY          = scale
-                            this.alpha      = alpha
-                            transformOrigin = TransformOrigin(0f, 0.5f)
+                        if (line.translation.isNotBlank()) {
+                            Text(
+                                text = line.translation,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = onBg.copy(alpha = alpha * 0.6f),
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                         }
-                )
+                    }
+                } else {
+                    // 普通歌词 — 白色实体文字 + 暗色未播放
+                    val isCurrentLine = index == currentLineIndex
+                    val isPastLine = index < currentLineIndex
+                    val fadeOutThresholdMs = remember(currentLineIndex, lrcLines) {
+                        val futureIdx = (currentLineIndex + 3).coerceAtMost(lrcLines.lastIndex)
+                        lrcLines.getOrNull(futureIdx)?.timeMs ?: Long.MAX_VALUE
+                    }
+                    val shouldHighlight = when {
+                        isCurrentLine -> true
+                        isPastLine -> currentMs < fadeOutThresholdMs
+                        else -> false
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                isUserScrolskypie = true
+                                lastUserScrollMs = System.currentTimeMillis()
+                                onSeekTo(line.timeMs)
+                                clickResumeJob?.cancel()
+                                clickResumeJob = coroutineScope.launch {
+                                    delay(500L)
+                                    isUserScrolskypie = false
+                                    lastUserScrollMs = 0L
+                                }
+                            }
+                            .padding(vertical = 4.dp)
+                            .graphicsLayer { this.alpha = alpha }
+                    ) {
+                        Text(
+                            text     = line.text,
+                            style    = MaterialTheme.typography.headlineSmall.copy(
+                                fontWeight = if (shouldHighlight) FontWeight.Bold else FontWeight.Normal
+                            ),
+                            color    = if (shouldHighlight) Color.White else Color.White.copy(alpha = 0.35f),
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (line.translation.isNotBlank()) {
+                            Text(
+                                text = line.translation,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = alpha * 0.6f),
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
                 Spacer(Modifier.height(if (isCurrent) 18.dp else 14.dp))
             }
         }

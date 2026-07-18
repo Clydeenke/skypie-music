@@ -42,6 +42,7 @@ private const val KEY_API_URL = "api_url"
 private const val KEY_3D_COVER = "enable_3d_cover"
 private const val KEY_DOWNLOAD_DIR = "download_dir"
 private const val KEY_PLAY_QUALITY = "play_quality"
+private const val KEY_ENABLE_KARAOKE = "enable_karaoke"
 const val DEFAULT_DOWNLOAD_DIR = "SkypieMusic"
 
 private val qualityOptions = listOf(
@@ -68,6 +69,7 @@ fun SettingsScreen(
     var showCleanOldDialog by remember { mutableStateOf(false) }
     var showPermDialog by remember { mutableStateOf(false) }
     var enable3DCover by remember { mutableStateOf(prefs.getBoolean(KEY_3D_COVER, true)) }
+    var enableKaraoke by remember { mutableStateOf(prefs.getBoolean(KEY_ENABLE_KARAOKE, false)) }
     var downloadDir by remember { mutableStateOf(prefs.getString(KEY_DOWNLOAD_DIR, DEFAULT_DOWNLOAD_DIR) ?: DEFAULT_DOWNLOAD_DIR) }
     var playQuality by remember { mutableStateOf(prefs.getString(KEY_PLAY_QUALITY, "standard") ?: "standard") }
 
@@ -225,6 +227,8 @@ fun SettingsScreen(
                 SettingsGroupLabel("播放设置")
                 SettingsCard {
                     SettingsSwitchItem(icon = Icons.Rounded.ViewInAr, title = "3D 封面效果", summary = if (enable3DCover) "根据手机倾斜角度旋转封面" else "封面固定不动", checked = enable3DCover, onCheckedChange = { enable3DCover = it; prefs.edit().putBoolean(KEY_3D_COVER, it).apply() })
+                    HorizontalDivider(modifier = Modifier.padding(start = 52.dp), thickness = 0.5.dp)
+                    SettingsSwitchItem(icon = Icons.Rounded.Lyrics, title = "逐字歌词", summary = if (enableKaraoke) "卡拉OK逐字高亮效果（此功能为实验性，部分歌词会出错）" else "普通歌词显示", checked = enableKaraoke, onCheckedChange = { enableKaraoke = it; prefs.edit().putBoolean(KEY_ENABLE_KARAOKE, it).apply() })
                 }
 
                 Spacer(Modifier.height(24.dp))

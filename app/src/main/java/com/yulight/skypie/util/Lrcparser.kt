@@ -7,7 +7,9 @@ import java.nio.charset.Charset
 import java.util.logging.Level
 import java.util.logging.Logger
 
-data class LrcLine(val timeMs: Long, val text: String)
+data class LyricWord(val text: String, val startMs: Long, val durationMs: Long)
+
+data class LrcLine(val timeMs: Long, val text: String, val words: List<LyricWord> = emptyList(), val translation: String = "")
 
 object LrcParser {
 
@@ -15,167 +17,163 @@ object LrcParser {
         Logger.getLogger("org.jaudiotagger").level = Level.OFF
     }
 
-    private val TAG_RE = Regex("""\[(\d{2}):(\d{2})\.(\d{2,3})\]([^\[]*)""")
+    private val LRC_RE = Regex("""\[(\d{2}):(\d{2})\.(\d{2,3})\]""")
+    private val WORD_TIME_RE = Regex("""<(\d{2}):(\d{2})\.(\d{2,3})>""")
 
     fun parse(content: String): List<LrcLine> {
+        if (content.isBlank()) return emptyList()
+        if (content.contains("<0") || content.contains("<1")) {
+            val wordResult = parseWordByWord(content)
+            if (wordResult.isNotEmpty()) return wordResult
+        }
+        return parseLrc(content)
+    }
+
+    private fun parseWordByWord(content: String): List<LrcLine> {
+        // 第一遍：收集所有行（逐字行 + 非逐字行）
+        data class RawLine(val timeMs: Long, val text: String, val isWordByWord: Boolean, val words: List<LyricWord> = emptyList())
+
+        val rawLines = mutableListOf<RawLine>()
+        content.lines().forEach { line ->
+            val timeMatch = LRC_RE.find(line) ?: return@forEach
+            val (min, sec, sub) = timeMatch.destructured
+            val multiplier = if (sub.length == 2) 10L else 1L
+            val lineTimeMs = min.toLong() * 60_000L + sec.toLong() * 1_000L + sub.toLong() * multiplier
+            val afterTimeTag = line.substring(timeMatch.range.last + 1)
+
+            if (afterTimeTag.contains(WORD_TIME_RE)) {
+                val words = mutableListOf<LyricWord>()
+                val timeMatches = WORD_TIME_RE.findAll(afterTimeTag).toList()
+                if (timeMatches.size >= 2) {
+                    var i = 0
+                    while (i < timeMatches.size - 1) {
+                        val (startMin, startSec, startSub) = timeMatches[i].destructured
+                        val startMult = if (startSub.length == 2) 10L else 1L
+                        val startTime = startMin.toLong() * 60_000L + startSec.toLong() * 1_000L + startSub.toLong() * startMult
+                        val (endMin, endSec, endSub) = timeMatches[i + 1].destructured
+                        val endMult = if (endSub.length == 2) 10L else 1L
+                        val endTime = endMin.toLong() * 60_000L + endSec.toLong() * 1_000L + endSub.toLong() * endMult
+                        val charStart = timeMatches[i].range.last + 1
+                        val charEnd = timeMatches[i + 1].range.first
+                        val charText = afterTimeTag.substring(charStart, charEnd)
+                        if (charText.isNotEmpty()) {
+                            words.add(LyricWord(charText, startTime, endTime - startTime))
+                        }
+                        i += 2
+                    }
+                }
+                if (words.isNotEmpty()) rawLines += RawLine(lineTimeMs, words.joinToString("") { it.text }, true, words)
+            } else if (afterTimeTag.isNotBlank()) {
+                rawLines += RawLine(lineTimeMs, afterTimeTag.trim(), false)
+            }
+        }
+
+        // 第二遍：逐字行创建 LrcLine，非逐字行合并为翻译
         val result = mutableListOf<LrcLine>()
+        val pendingTranslations = mutableMapOf<Long, String>()
+
+        for (raw in rawLines) {
+            if (raw.isWordByWord) {
+                val translation = pendingTranslations.remove(raw.timeMs) ?: ""
+                result += LrcLine(raw.timeMs, raw.text, raw.words, translation)
+            } else {
+                // 非逐字行：尝试合并到同时间戳的逐字行
+                val target = result.indexOfFirst { it.timeMs == raw.timeMs }
+                if (target >= 0) {
+                    result[target] = result[target].copy(translation = raw.text)
+                } else {
+                    // 还没有对应的逐字行（顺序问题），暂存翻译
+                    pendingTranslations[raw.timeMs] = raw.text
+                }
+            }
+        }
+        return result.sortedBy { it.timeMs }
+    }
+
+    private fun parseLrc(content: String): List<LrcLine> {
+        // 第一遍：收集所有行
+        data class RawLrc(val timeMs: Long, val text: String)
+        val rawLines = mutableListOf<RawLrc>()
         content.lines().forEach { rawLine ->
             var remaining = rawLine.trimStart()
             while (remaining.startsWith("[")) {
-                val m = TAG_RE.find(remaining) ?: break
-                val (min, sec, sub, text) = m.destructured
+                val m = LRC_RE.find(remaining) ?: break
+                val (min, sec, sub) = m.destructured
                 val multiplier = if (sub.length == 2) 10L else 1L
-                val timeMs = min.toLong() * 60_000L +
-                        sec.toLong() * 1_000L +
-                        sub.toLong() * multiplier
-                val trimmed = text.trim()
-                if (trimmed.isNotEmpty()) result += LrcLine(timeMs, trimmed)
+                val timeMs = min.toLong() * 60_000L + sec.toLong() * 1_000L + sub.toLong() * multiplier
+                val text = remaining.substring(m.range.last + 1).trim()
+                if (text.isNotEmpty()) rawLines += RawLrc(timeMs, text)
                 remaining = remaining.substring(m.range.last + 1)
+            }
+        }
+        // 第二遍：同时间戳的行合并（第一行当正文，其余当翻译）
+        val result = mutableListOf<LrcLine>()
+        for (raw in rawLines) {
+            val existing = result.indexOfFirst { it.timeMs == raw.timeMs }
+            if (existing >= 0) {
+                val existingLine = result[existing]
+                val mergedTranslation = if (existingLine.translation.isNotBlank()) {
+                    existingLine.translation + "\n" + raw.text
+                } else raw.text
+                result[existing] = existingLine.copy(translation = mergedTranslation)
+            } else {
+                result += LrcLine(raw.timeMs, raw.text)
             }
         }
         return result.sortedBy { it.timeMs }
     }
 
     fun loadForSong(folderPath: String, title: String, filePath: String = "", artist: String = ""): List<LrcLine>? {
-        // 1. 优先读音乐文件内嵌歌词
-        if (filePath.isNotBlank()) {
-            val embedded = loadEmbeddedLyrics(filePath)
-            if (embedded != null) return embedded
-        }
-        // 2. 再找同目录 .lrc 文件
+        if (filePath.isNotBlank()) { val embedded = loadEmbeddedLyrics(filePath); if (embedded != null) return embedded }
         return loadFromLrcFile(folderPath, title, artist, filePath)
     }
 
     private fun loadEmbeddedLyrics(filePath: String): List<LrcLine>? {
         return try {
-            val file = File(filePath)
-            if (!file.exists()) return null
-            val audioFile = AudioFileIO.read(file)
-            val tag       = audioFile.tag ?: return null
-            val raw       = tag.getFirst(FieldKey.LYRICS)
-            if (raw.isNullOrBlank()) return null
+            val file = File(filePath); if (!file.exists()) return null
+            val audioFile = AudioFileIO.read(file); val tag = audioFile.tag ?: return null
+            val raw = tag.getFirst(FieldKey.LYRICS); if (raw.isNullOrBlank()) return null
             val parsed = parse(raw)
-            if (parsed.isNotEmpty()) {
-                parsed
-            } else {
-                raw.lines()
-                    .map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .mapIndexed { index, line -> LrcLine(index * 5000L, line) }
-                    .ifEmpty { null }
-            }
+            if (parsed.isNotEmpty()) parsed
+            else raw.lines().map { it.trim() }.filter { it.isNotEmpty() }.mapIndexed { i, line -> LrcLine(i * 5000L, line) }.ifEmpty { null }
         } catch (_: Exception) { null }
     }
 
     private fun loadFromLrcFile(folderPath: String, title: String, artist: String = "", filePath: String = ""): List<LrcLine>? {
-        val folder = File(folderPath)
-        if (!folder.isDirectory) return null
-
-        val titleNorm  = title.lowercase().trim()
-        val artistNorm = artist.lowercase().trim()
-
-        // ── 第0步：音频文件同名 .lrc（最可靠，完全不靠模糊匹配） ──────────────
-        // 比如音频是 "两个我们 - 任立佳.mp3"，就直接找 "两个我们 - 任立佳.lrc"
-        if (filePath.isNotBlank()) {
-            val exactLrc = File(filePath.substringBeforeLast(".") + ".lrc")
-            if (exactLrc.exists()) return tryParse(exactLrc)
-        }
-
-        // ── 第1步：精确文件名匹配（同时含标题+歌手，优先级最高） ──────────────
-        listOf(
-            "$title - $artist.lrc",
-            "$artist - $title.lrc",
-            "$title.lrc"
-        ).forEach { name ->
-            val f = File(folder, name)
-            if (f.exists()) return tryParse(f)
-        }
-
-        // ── 第2步：收集所有 .lrc 文件 ─────────────────────────────────────────
-        val lrcFiles = folder.listFiles { f ->
-            f.isFile && f.extension.equals("lrc", ignoreCase = true)
-        } ?: return null
+        val folder = File(folderPath); if (!folder.isDirectory) return null
+        val titleNorm = title.lowercase().trim(); val artistNorm = artist.lowercase().trim()
+        if (filePath.isNotBlank()) { val exactLrc = File(filePath.substringBeforeLast(".") + ".lrc"); if (exactLrc.exists()) return tryParse(exactLrc) }
+        listOf("$title - $artist.lrc", "$artist - $title.lrc", "$title.lrc").forEach { name -> val f = File(folder, name); if (f.exists()) return tryParse(f) }
+        val lrcFiles = folder.listFiles { f -> f.isFile && f.extension.equals("lrc", ignoreCase = true) } ?: return null
         if (lrcFiles.isEmpty()) return null
-
-        // ── 第3步：对每个文件打分，取最高分 ──────────────────────────────────
-        // 评分规则：
-        //   标题完全匹配 → +2.0
-        //   标题模糊匹配 → +相似度(0~1)
-        //   歌手完全匹配 → +1.0（额外加分，这样同名不同人的歌不会用错）
-        //   歌手模糊匹配 → +相似度*0.5
         data class Candidate(val file: File, val score: Float)
-
         val candidates = lrcFiles.mapNotNull { f ->
-            val stem = f.nameWithoutExtension.lowercase().trim()
-
-            // 把 "歌手 - 标题" 或 "标题 - 歌手" 两种格式都拆出来
-            val parts = stem.split(" - ", limit = 2)
-            val stemTitle  = if (parts.size == 2) parts[1] else stem
-            val stemArtist = if (parts.size == 2) parts[0] else ""
-
-            // 标题相似度
-            val titleScore = when {
-                stem == titleNorm       -> 2.0f  // 文件名就是标题，完全一致
-                stemTitle == titleNorm  -> 2.0f  // 拆出来的标题完全一致
-                stem.startsWith(titleNorm) || stemTitle.startsWith(titleNorm) -> 1.5f
-                titleNorm.length >= 4 && similarityRatio(stemTitle.ifBlank { stem }, titleNorm) >= 0.55f ->
-                    similarityRatio(stemTitle.ifBlank { stem }, titleNorm)
-                else -> return@mapNotNull null  // 标题完全不像，直接排除
-            }
-
-            // 歌手相似度（没有歌手信息就不加分也不扣分）
-            val artistScore = when {
-                artistNorm.isBlank() || stemArtist.isBlank() -> 0f
-                stemArtist == artistNorm -> 1.0f
-                similarityRatio(stemArtist, artistNorm) >= 0.6f ->
-                    similarityRatio(stemArtist, artistNorm) * 0.5f
-                else -> -0.3f  // 歌手明显不对，小幅扣分
-            }
-
+            val stem = f.nameWithoutExtension.lowercase().trim(); val parts = stem.split(" - ", limit = 2)
+            val stemTitle = if (parts.size == 2) parts[1] else stem; val stemArtist = if (parts.size == 2) parts[0] else ""
+            val titleScore = when { stem == titleNorm -> 2.0f; stemTitle == titleNorm -> 2.0f; stem.startsWith(titleNorm) || stemTitle.startsWith(titleNorm) -> 1.5f; titleNorm.length >= 4 && similarityRatio(stemTitle.ifBlank { stem }, titleNorm) >= 0.55f -> similarityRatio(stemTitle.ifBlank { stem }, titleNorm); else -> return@mapNotNull null }
+            val artistScore = when { artistNorm.isBlank() || stemArtist.isBlank() -> 0f; stemArtist == artistNorm -> 1.0f; similarityRatio(stemArtist, artistNorm) >= 0.6f -> similarityRatio(stemArtist, artistNorm) * 0.5f; else -> -0.3f }
             Candidate(f, titleScore + artistScore)
         }
-
-        if (candidates.isEmpty()) return null
-
-        // 取得分最高的文件
-        val best = candidates.maxByOrNull { it.score } ?: return null
-
-        // 如果最高分太低（说明没有真正匹配的），不返回
-        if (best.score < 0.8f) return null
-
-        return tryParse(best.file)
+        if (candidates.isEmpty()) return null; val best = candidates.maxByOrNull { it.score } ?: return null; if (best.score < 0.8f) return null; return tryParse(best.file)
     }
 
-    private fun similarityRatio(a: String, b: String): Float {
-        if (a.isEmpty() || b.isEmpty()) return 0f
-        if (a == b) return 1f
-        val lcs = lcsLength(a, b)
-        return 2f * lcs / (a.length + b.length)
+    private fun similarityRatio(a: String, b: String): Float { if (a.isEmpty() || b.isEmpty()) return 0f; if (a == b) return 1f; return 2f * lcsLength(a, b) / (a.length + b.length) }
+    private fun lcsLength(a: String, b: String): Int { val m = a.length; val n = b.length; var prev = IntArray(n + 1); var curr = IntArray(n + 1); for (i in 1..m) { for (j in 1..n) { curr[j] = if (a[i-1] == b[j-1]) prev[j-1]+1 else maxOf(curr[j-1], curr[j]) }; val t=prev; prev=curr; curr=t; curr.fill(0) }; return prev[n] }
+    /**
+     * 对比两组歌词文本是否匹配（忽略时间戳，只比较文字内容）
+     * 用于验证云端逐字歌词是否和本地/标准 LRC 是同一首歌
+     */
+    fun lyricsMatch(a: List<LrcLine>, b: List<LrcLine>): Boolean {
+        if (a.isEmpty() || b.isEmpty()) return false
+        val textsA = a.filter { it.words.isNotEmpty() }.map { it.text.trim() }
+        val textsB = b.map { it.text.trim() }
+        if (textsA.isEmpty() || textsB.isEmpty()) return false
+        val sampleSize = minOf(5, textsA.size, textsB.size)
+        if (sampleSize < 2) return false
+        val matchCount = (0 until sampleSize).count { i -> textsA[i] == textsB[i] }
+        return matchCount >= sampleSize / 2
     }
 
-    private fun lcsLength(a: String, b: String): Int {
-        val m = a.length; val n = b.length
-        var prev = IntArray(n + 1); var curr = IntArray(n + 1)
-        for (i in 1..m) {
-            for (j in 1..n) {
-                curr[j] = if (a[i - 1] == b[j - 1]) prev[j - 1] + 1
-                else maxOf(curr[j - 1], prev[j])
-            }
-            val tmp = prev; prev = curr; curr = tmp; curr.fill(0)
-        }
-        return prev[n]
-    }
-
-    private val CHARSETS = listOf(
-        Charsets.UTF_8,
-        runCatching { Charset.forName("GBK")    }.getOrNull(),
-        runCatching { Charset.forName("GB18030") }.getOrNull()
-    ).filterNotNull()
-
-    private fun tryParse(file: File): List<LrcLine>? {
-        for (cs in CHARSETS) {
-            try { return parse(file.readText(cs)) } catch (_: Exception) { }
-        }
-        return null
-    }
+    private val CHARSETS = listOf(Charsets.UTF_8, runCatching { Charset.forName("GBK") }.getOrNull(), runCatching { Charset.forName("GB18030") }.getOrNull()).filterNotNull()
+    private fun tryParse(file: File): List<LrcLine>? { for (cs in CHARSETS) { try { return parse(file.readText(cs)) } catch (_: Exception) {} }; return null }
 }

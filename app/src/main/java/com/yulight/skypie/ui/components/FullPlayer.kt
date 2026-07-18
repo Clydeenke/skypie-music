@@ -48,6 +48,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.Player
 import coil.compose.AsyncImage
 import com.yulight.skypie.util.LrcLine
+import com.yulight.skypie.util.FavoriteManager
+import com.yulight.skypie.util.FavoriteSong
 import com.yulight.skypie.util.LrcParser
 import com.yulight.skypie.viewmodel.MusicViewModel
 import kotlinx.coroutines.Dispatchers
@@ -208,24 +210,31 @@ internal fun FullPlayer(
 
     // ── 收藏 ──────────────────────────────────────────────────────────────────
     var isFavorite by remember(displaySong?.id) {
-        val prefs = context.getSharedPreferences("skypie_favorites", 0)
-        mutableStateOf(prefs.getBoolean(displaySong?.id?.toString() ?: "", false))
+        mutableStateOf(FavoriteManager.isFavorite(context, displaySong?.id?.toString() ?: ""))
     }
     var isDownloading by remember { mutableStateOf(false) }
 
     fun toggleFavorite() {
-        val prefs    = context.getSharedPreferences("skypie_favorites", 0)
+        val s = displaySong ?: return
         val newState = !isFavorite
-        isFavorite   = newState
-        prefs.edit().putBoolean(displaySong?.id?.toString() ?: "", newState).apply()
+        isFavorite = newState
         if (newState) {
+            val favSong = FavoriteSong(
+                songId = s.id.toString(),
+                title = s.title,
+                artist = s.artist,
+                coverUrl = s.albumArtUri ?: "",
+                source = "",
+                duration = s.duration.toInt()
+            )
+            FavoriteManager.addFavorite(context, favSong)
+            // 下载歌曲
             val streamUrl = controller.getCurrentStreamUrl() ?: return
-            val s         = displaySong ?: return
-            val title     = s.title.replace(Regex("[/\\\\:*?\"<>|]"), "_")
-            val artist    = s.artist.replace(Regex("[/\\\\:*?\"<>|]"), "_")
             isDownloading = true
-            val prefs = context.getSharedPreferences("skypie_settings", 0)
-            val downloadDir = prefs.getString("download_dir", com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR) ?: com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR
+            val settings = context.getSharedPreferences("skypie_settings", 0)
+            val downloadDir = settings.getString("download_dir", com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR) ?: com.yulight.skypie.ui.screen.settings.DEFAULT_DOWNLOAD_DIR
+            val title = s.title.replace(Regex("[/\\\\:*?\"<>|]"), "_")
+            val artist = s.artist.replace(Regex("[/\\\\:*?\"<>|]"), "_")
             val req = android.app.DownloadManager.Request(android.net.Uri.parse(streamUrl)).apply {
                 setTitle(s.title); setDescription(s.artist)
                 setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
@@ -234,6 +243,8 @@ internal fun FullPlayer(
             }
             context.getSystemService(android.app.DownloadManager::class.java).enqueue(req)
             isDownloading = false
+        } else {
+            FavoriteManager.removeFavorite(context, s.id.toString())
         }
     }
 
@@ -241,22 +252,48 @@ internal fun FullPlayer(
     val onlineLrcText by viewModel.playerController.onlineLrcText.collectAsStateWithLifecycle()
     val isOnlineMode  by viewModel.playerController.isOnlineMode.collectAsStateWithLifecycle()
     var lrcLines by remember { mutableStateOf<List<LrcLine>>(emptyList()) }
-
     LaunchedEffect(displaySong?.id, isOnlineMode, onlineLrcText) {
         lrcLines = emptyList()
+        val karaokeEnabled = context.getSharedPreferences("skypie_settings", 0).getBoolean("enable_karaoke", false)
         if (isOnlineMode) {
-            if (onlineLrcText.isNotBlank()) withContext(Dispatchers.IO) { lrcLines = LrcParser.parse(onlineLrcText) }
+            withContext(Dispatchers.IO) {
+                if (karaokeEnabled) {
+                    val t = displaySong?.title ?: ""
+                    val ar = displaySong?.artist ?: ""
+                    val networkLyrics = com.yulight.skypie.util.LyricsSearcher.searchLyrics(t, ar)
+                    if (!networkLyrics.isNullOrBlank()) {
+                        lrcLines = LrcParser.parse(networkLyrics)
+                        return@withContext
+                    }
+                }
+                if (onlineLrcText.isNotBlank()) { lrcLines = LrcParser.parse(onlineLrcText) }
+            }
         } else {
             val fp  = displaySong?.folderPath ?: return@LaunchedEffect
             val t   = displaySong?.title      ?: return@LaunchedEffect
             val fp2 = displaySong?.filePath   ?: ""
             val ar  = displaySong?.artist     ?: ""
             withContext(Dispatchers.IO) {
+                if (karaokeEnabled) {
+                    // 逐字开关开 → 先尝试云端逐字歌词
+                    val networkLyrics = com.yulight.skypie.util.LyricsSearcher.searchLyrics(t, ar)
+                    if (!networkLyrics.isNullOrBlank()) {
+                        lrcLines = LrcParser.parse(networkLyrics)
+                        return@withContext
+                    }
+                }
+                // 逐字开关关 或 没有逐字 → 读内嵌歌词
                 val embedded: String? = if (fp2.isNotBlank()) {
                     try { AudioFileIO.read(java.io.File(fp2)).tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() } } catch (_: Exception) { null }
                 } else null
-                lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
-                else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                if (!embedded.isNullOrBlank()) {
+                    lrcLines = LrcParser.parse(embedded)
+                } else {
+                    val localLrc = LrcParser.loadForSong(fp, t, fp2, ar)
+                    if (localLrc != null && localLrc.isNotEmpty()) {
+                        lrcLines = localLrc
+                    }
+                }
             }
         }
     }
@@ -427,6 +464,8 @@ internal fun FullPlayer(
                             animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
                             label = "lrcScale$idx"
                         )
+
+                        // 预览条：始终使用普通文字，不做逐字染色
                         Text(
                             text     = line.text,
                             style    = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal),

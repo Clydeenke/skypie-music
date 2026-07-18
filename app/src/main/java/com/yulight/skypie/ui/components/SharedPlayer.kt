@@ -213,13 +213,21 @@ fun SharedPlayerContainer(
         var lrcLines by remember { mutableStateOf<List<LrcLine>>(emptyList()) }
         val onlineLrcText by viewModel.playerController.onlineLrcText.collectAsStateWithLifecycle()
         val isOnlineMode  by viewModel.playerController.isOnlineMode.collectAsStateWithLifecycle()
-
         LaunchedEffect(song?.id, isOnlineMode, onlineLrcText) {
             lrcLines = emptyList()
+            val karaokeEnabled = context.getSharedPreferences("skypie_settings", 0).getBoolean("enable_karaoke", false)
             if (isOnlineMode) {
-                // 在线播放：直接解析内存里的歌词文本
-                if (onlineLrcText.isNotBlank()) {
-                    withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO) {
+                    if (karaokeEnabled) {
+                        val t = song?.title ?: ""
+                        val ar = song?.artist ?: ""
+                        val networkLyrics = com.yulight.skypie.util.LyricsSearcher.searchLyrics(t, ar)
+                        if (!networkLyrics.isNullOrBlank()) {
+                            lrcLines = LrcParser.parse(networkLyrics)
+                            return@withContext
+                        }
+                    }
+                    if (onlineLrcText.isNotBlank()) {
                         lrcLines = LrcParser.parse(onlineLrcText)
                     }
                 }
@@ -229,32 +237,35 @@ fun SharedPlayerContainer(
                 val fp2 = song?.filePath   ?: ""
                 val ar  = song?.artist     ?: ""
                 withContext(Dispatchers.IO) {
-
-                    // 尝试读 ID3 嵌入歌词
+                    if (karaokeEnabled) {
+                        val networkLyrics = com.yulight.skypie.util.LyricsSearcher.searchLyrics(t, ar)
+                        if (!networkLyrics.isNullOrBlank()) {
+                            lrcLines = LrcParser.parse(networkLyrics)
+                            return@withContext
+                        }
+                    }
                     val embedded: String? = if (fp2.isNotBlank()) {
                         try {
                             val af = AudioFileIO.read(java.io.File(fp2))
                             af.tag?.getFirst(FieldKey.LYRICS)?.takeIf { it.isNotBlank() }
-                        } catch (_: Exception) {
-                            null
-                        }
+                        } catch (_: Exception) { null }
                     } else null
 
-                    lrcLines = if (!embedded.isNullOrBlank()) {
-                        LrcParser.parse(embedded)
+                    if (!embedded.isNullOrBlank()) {
+                        lrcLines = LrcParser.parse(embedded)
                     } else {
-                        LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
+                        val localLrc = LrcParser.loadForSong(fp, t, fp2, ar)
+                        if (localLrc != null && localLrc.isNotEmpty()) {
+                            lrcLines = localLrc
+                        }
                     }
-
-                    lrcLines = if (!embedded.isNullOrBlank()) LrcParser.parse(embedded)
-                               else LrcParser.loadForSong(fp, t, fp2, ar) ?: emptyList()
                 }
             }
         }
 
         var currentMsForLyrics by remember { mutableLongStateOf(0L) }
         LaunchedEffect(Unit) {
-            while (isActive) { currentMsForLyrics = viewModel.playerController.getCurrentPosition(); delay(1000) }
+            while (isActive) { currentMsForLyrics = viewModel.playerController.getCurrentPosition(); delay(100) }
         }
 
         val velocityTracker = remember { VelocityTracker() }
@@ -485,6 +496,7 @@ fun SharedPlayerContainer(
                     MiniPlayer(viewModel = viewModel, gestureMod = miniGestureMod, hazeState = hazeState, onQueueClick = { showQueueSheet = true })
                 }
             }
+            
         }
     }
 

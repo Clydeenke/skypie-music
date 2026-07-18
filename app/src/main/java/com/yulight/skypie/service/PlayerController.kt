@@ -174,14 +174,14 @@ class PlayerController @Inject constructor(
     fun playQueue(songs: List<Song>, startIndex: Int = 0, lrcText: String = "") {
         if (songs.isEmpty()) return
         val startIdx = startIndex.coerceIn(0, songs.lastIndex)
-        val isOnline = songs[startIdx].uri.startsWith("http")
+        val startSong = songs[startIdx]
+        val isOnline = startSong.uri.startsWith("http")
         _isOnlineMode.value = isOnline
-        _currentStreamUrl   = if (isOnline) songs[startIdx].uri else null
-        // 存储歌词到 map
+        _currentStreamUrl   = if (isOnline) startSong.uri else null
         if (isOnline && lrcText.isNotBlank()) {
-            songLrcMap[songs[startIdx].id.toString()] = lrcText
+            songLrcMap[startSong.id.toString()] = lrcText
         }
-        _onlineLrcText.value = if (isOnline) (songLrcMap[songs[startIdx].id.toString()] ?: "") else ""
+        _onlineLrcText.value = if (isOnline) (songLrcMap[startSong.id.toString()] ?: "") else ""
         _currentQueue.value = songs
         _currentIndex.value = startIdx
         val items = songs.mapIndexed { index, song -> song.toMediaItem(index, isOnline) }
@@ -193,6 +193,22 @@ class PlayerController @Inject constructor(
             play()
         }
         _currentSong.value = songs.getOrNull(_currentIndex.value)
+        // 记录播放历史
+        if (isOnline) {
+            try {
+                val onlineSongs = this.onlineSongs
+                val matched = onlineSongs?.firstOrNull { it.id.toLongOrNull()?.plus(1) == startSong.id || it.title == startSong.title }
+                if (matched != null) {
+                    val favSong = com.yulight.skypie.util.FavoriteSong(
+                        songId = matched.id, title = matched.title, artist = matched.artist,
+                        coverUrl = matched.coverUrl, source = matched.source.name.lowercase(),
+                        duration = matched.duration
+                    )
+                    com.yulight.skypie.util.HistoryManager.addHistory(context, favSong)
+                    com.yulight.skypie.util.CacheManager.addCache(context, favSong)
+                }
+            } catch (_: Exception) {}
+        }
     }
 
     fun restoreQueue(songs: List<Song>, startIndex: Int, positionMs: Long) {

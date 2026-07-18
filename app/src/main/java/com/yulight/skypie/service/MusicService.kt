@@ -38,8 +38,8 @@ class MusicService : MediaSessionService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     companion object {
-        // 自定义命令标识，代替原来的 Intent Action
         const val COMMAND_LYRICS_TOGGLE = "com.yulight.skypie.COMMAND_LYRICS_TOGGLE"
+        const val COMMAND_EXIT_APP = "com.yulight.skypie.COMMAND_EXIT_APP"
     }
 
     override fun onCreate() {
@@ -63,10 +63,13 @@ class MusicService : MediaSessionService() {
                 enabled to locked
             }.collect { (enabled, locked) ->
                 mediaSession?.let { session ->
-                    // 构建最新状态的按钮
-                    val newButton = buildLyricsCommandButton(enabled, locked)
-                    // 提交给系统，系统立刻刷新通知栏和锁屏界面
-                    session.setCustomLayout(ImmutableList.of(newButton))
+                    val lyricsButton = buildLyricsCommandButton(enabled, locked)
+                    val exitButton = CommandButton.Builder()
+                        .setDisplayName("关闭应用")
+                        .setIconResId(android.R.drawable.ic_menu_close_clear_cancel)
+                        .setSessionCommand(SessionCommand(COMMAND_EXIT_APP, Bundle.EMPTY))
+                        .build()
+                    session.setCustomLayout(ImmutableList.of(lyricsButton, exitButton))
                 }
             }
         }
@@ -131,17 +134,22 @@ class MusicService : MediaSessionService() {
             // 声明支持我们自定义的歌词切换命令
             val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS.buildUpon()
                 .add(SessionCommand(COMMAND_LYRICS_TOGGLE, Bundle.EMPTY))
+                .add(SessionCommand(COMMAND_EXIT_APP, Bundle.EMPTY))
                 .build()
 
-            // 获取当前按钮状态
             val initialButton = buildLyricsCommandButton(
                 lyricsPrefs.isEnabled.value,
                 lyricsPrefs.isLocked.value
             )
+            val exitButton = CommandButton.Builder()
+                .setDisplayName("关闭应用")
+                .setIconResId(android.R.drawable.ic_menu_close_clear_cancel)
+                .setSessionCommand(SessionCommand(COMMAND_EXIT_APP, Bundle.EMPTY))
+                .build()
 
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(sessionCommands)
-                .setCustomLayout(ImmutableList.of(initialButton)) // 把按钮发给系统
+                .setCustomLayout(ImmutableList.of(initialButton, exitButton))
                 .build()
         }
 
@@ -153,9 +161,13 @@ class MusicService : MediaSessionService() {
             args: Bundle
         ): ListenableFuture<SessionResult> {
             if (customCommand.customAction == COMMAND_LYRICS_TOGGLE) {
-
-                handleLyricsToggle() // 执行你的业务逻辑
-
+                handleLyricsToggle()
+                return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+            }
+            if (customCommand.customAction == COMMAND_EXIT_APP) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                android.os.Process.killProcess(android.os.Process.myPid())
                 return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
             }
             return super.onCustomCommand(session, controller, customCommand, args)

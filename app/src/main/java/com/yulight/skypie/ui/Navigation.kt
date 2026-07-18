@@ -40,7 +40,12 @@ import com.yulight.skypie.ui.screen.folders.FolderScreen
 import com.yulight.skypie.ui.screen.library.LibraryScreen
 import com.yulight.skypie.ui.screen.playlist.PlaylistDetailScreen
 import com.yulight.skypie.ui.screen.playlist.PlaylistListScreen
-import com.yulight.skypie.ui.screen.search.OnlineSearchScreen
+import com.yulight.skypie.ui.screen.online.cache.CacheScreen
+import com.yulight.skypie.ui.screen.online.favorites.FavoritesScreen
+import com.yulight.skypie.ui.screen.online.history.HistoryScreen
+import com.yulight.skypie.ui.screen.online.home.OnlineHomeScreen
+import com.yulight.skypie.ui.screen.online.search.OnlineSearchScreen
+import com.yulight.skypie.ui.screen.online.rank.OnlineRankScreen
 import com.yulight.skypie.ui.screen.settings.AboutScreen
 import com.yulight.skypie.ui.screen.settings.SettingsScreen
 import com.yulight.skypie.viewmodel.MusicViewModel
@@ -56,6 +61,11 @@ import kotlinx.serialization.Serializable
 @Serializable object About : NavKey
 @Serializable object Folder : NavKey
 @Serializable object Online : NavKey
+@Serializable object Favorites : NavKey
+@Serializable object History : NavKey
+@Serializable object Cache : NavKey
+@Serializable object CloudSearch : NavKey
+@Serializable data class CloudRank(val rankIndex: Int = 0) : NavKey
 @Serializable object Download : NavKey
 @Serializable object Playlists : NavKey
 @Serializable data class PlaylistDetail(val playlistId: Long) : NavKey
@@ -128,10 +138,44 @@ fun MainNavigation() {
                         FolderScreen(viewModel = viewModel, onBack = { backStack.removeLastOrNull() })
                     }
                     entry<Online> {
+                        OnlineHomeScreen(
+                            onBack       = { backStack.removeLastOrNull() },
+                            onOpenSearch = { query -> backStack.add(CloudSearch) },
+                            onOpenRank   = { rankIndex -> backStack.add(CloudRank(rankIndex)) },
+                            onOpenFavorites = { backStack.add(Favorites) },
+                            onOpenHistory = { backStack.add(History) },
+                            onOpenCache = { backStack.add(Cache) }
+                        )
+                    }
+                    entry<Favorites> {
+                        FavoritesScreen(
+                            onBack = { backStack.removeLastOrNull() },
+                            onOpenPlayer = { viewModel.requestOpenPlayer() }
+                        )
+                    }
+                    entry<History> {
+                        HistoryScreen(
+                            onBack = { backStack.removeLastOrNull() },
+                            onOpenPlayer = { viewModel.requestOpenPlayer() }
+                        )
+                    }
+                    entry<Cache> {
+                        CacheScreen(
+                            onBack = { backStack.removeLastOrNull() },
+                            onOpenPlayer = { viewModel.requestOpenPlayer() }
+                        )
+                    }
+                    entry<CloudSearch> {
                         OnlineSearchScreen(
-                            onBack             = { backStack.removeLastOrNull() },
-                            onDownloadComplete = { viewModel.refresh() },
-                            onOpenPlayer       = { viewModel.requestOpenPlayer() }
+                            onBack  = { backStack.removeLastOrNull() },
+                            onOpenPlayer = { viewModel.requestOpenPlayer() }
+                        )
+                    }
+                    entry<CloudRank> { key ->
+                        OnlineRankScreen(
+                            rankIndex = key.rankIndex,
+                            onBack = { backStack.removeLastOrNull() },
+                            onOpenPlayer = { viewModel.requestOpenPlayer() }
                         )
                     }
                     entry<Download> {

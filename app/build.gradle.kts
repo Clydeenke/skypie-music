@@ -36,12 +36,13 @@ android {
         applicationId = "com.yulight.skypie"
         minSdk = 23
         targetSdk = 36
-        versionCode = 15
-        versionName = "1.3.3"
+        versionCode = 16
+        versionName = "1.4.0-dev"
         multiDexEnabled = true
 
         // 从 local.properties 读取默认 API 地址
         buildConfigField("String", "DEFAULT_API_URL", "\"${localProperties.getProperty("DEFAULT_API_URL", "")}\"")
+        buildConfigField("String", "LYRICS_API_URL", "\"${localProperties.getProperty("LYRICS_API_URL", "")}\"")
     }
 
     buildTypes {

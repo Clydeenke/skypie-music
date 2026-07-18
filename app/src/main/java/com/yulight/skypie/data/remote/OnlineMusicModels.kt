@@ -13,8 +13,10 @@ data class OnlineSong(
 )
 
 enum class MusicSource(val displayName: String) {
+    KUWO("小黄"),
     KUGOU("小蓝"),
-    KUWO("小黄")
+    NETEASE("小红"),
+    QQ("小绿")
 }
 
 // ── UI 状态 ───────────────────────────────────────────────────────────────────
